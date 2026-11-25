@@ -1,0 +1,8 @@
+/* TEAM */
+Developer: Vin
+Studio: Vin's Atelier
+Site: vwesley.dev
+
+/* APP */
+Name: Editelier
+Standards: HTML, CSS, TypeScript, Rust (Tauri 2)
