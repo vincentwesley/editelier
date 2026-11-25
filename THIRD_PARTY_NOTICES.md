@@ -20,4 +20,10 @@ Pixel kit and icons (`pixel/`, `icons/`):
 | ZzFX Micro 1.4.0 (ES module, lazy AudioContext) | Frank Force | https://github.com/KilledByAPixel/ZzFX | MIT | `js/zzfx.js` |
 
 
+Vendored Rust source (`crates/vendor/`), each with its licence file and a `PROVENANCE` note:
+
+| Crate | Author | Source | Licence | Files |
+|---|---|---|---|---|
+| craft-time (Tick, TimeRange, FrameRate subset) | ArtCraft Team and the craft-libs contributors | https://github.com/storytold/craft-libs/tree/a4db799563c9ccd7217e1731ec34c58f6ba57248/crates/time | MIT (dual MIT OR Apache-2.0 upstream; taken under MIT, `LICENSE-MIT`) | `crates/vendor/craft-time/src/lib.rs` |
+
 Commissioned artwork and the credits character are **all rights reserved, not MIT**: see `NOTICE.md`.

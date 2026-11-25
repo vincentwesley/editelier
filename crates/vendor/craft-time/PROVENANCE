@@ -1,0 +1,6 @@
+Source: https://github.com/storytold/craft-libs/blob/a4db799563c9ccd7217e1731ec34c58f6ba57248/crates/time/src/lib.rs
+Commit: a4db799563c9ccd7217e1731ec34c58f6ba57248 (the craft-libs revision pinned by storytold/filmcraft 2d1d1b6)
+Licence: MIT OR Apache-2.0 upstream; taken under MIT (LICENSE-MIT, copied from the craft-libs repo root).
+Changes: kept Tick, TimeRange, FrameRate and their private helpers verbatim; removed the soundcraft
+module, timecode/display formatting and parsing, and the unit tests; added the header comment.
+rustfmt.toml keeps upstream's 160-column style so the code stays diffable against the source.

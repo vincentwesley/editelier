@@ -1,0 +1,8 @@
+[workspace]
+resolver = "3"
+members = ["crates/editelier-core", "crates/vendor/craft-time"]
+
+[workspace.dependencies]
+serde = { version = "1.0.228", features = ["derive", "rc"] }
+serde_json = "1.0.145"
+craft-time = { path = "crates/vendor/craft-time" }

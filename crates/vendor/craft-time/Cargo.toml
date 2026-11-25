@@ -1,0 +1,10 @@
+[package]
+name = "craft-time"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Exact media time and rational frame rates (vendored subset of storytold/craft-libs craft-time)"
+publish = false
+
+[dependencies]
+serde = { workspace = true }
