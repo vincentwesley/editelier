@@ -2,7 +2,7 @@
 
 Editelier is a free video and photo editor for Windows by Vin's Atelier. Trim and arrange clips, touch up photos and export, in a fast native app built with Tauri 2 (Rust core, TypeScript + Vite UI) and packaged as MSIX. Everything happens on your machine: no account, no cloud, no uploads.
 
-Status: early scaffold (M0). The UI shell lives in `ui/`; the Rust core arrives next.
+Status: early scaffold (M0). The UI shell lives in `ui/`; the Rust core arrives next. Plan and decisions: `docs/PLAN.md`, `docs/DECISIONS.md`; privacy policy: `docs/PRIVACY.md`.
 
 ## Run the UI
 ```
