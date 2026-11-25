@@ -12,3 +12,8 @@ h1, h2 { font-family: var(--font-head); margin: 0 0 0.5rem; }
 .top h1 { margin: 0; }
 main { min-height: 60vh; display: grid; place-items: center; }
 .welcome { width: 100%; }
+
+/* M1 preview spike: the native viewer HWND sits over #preview (D1). */
+.has-preview main { max-width: none; display: block; min-height: 0; }
+#preview { width: min(100%, calc((100vh - 9rem) * 16 / 9)); aspect-ratio: 16 / 9; margin: 0 auto; background: #000; }
+.preview-stats { font-family: var(--font-mono); text-align: center; margin: 0.5rem 0; min-height: 1.5em; }

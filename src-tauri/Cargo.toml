@@ -1,0 +1,33 @@
+[package]
+name = "editelier"
+version = "0.1.0"
+description = "Editelier: free Windows video and photo editor"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2.7.6", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.7", features = [] }
+serde = { version = "1", features = ["derive"] }
+wgpu = { version = "30.0.2", default-features = false, features = ["dx12", "wgsl"] }
+raw-window-handle = "0.6.2"
+pollster = "1.0.3"
+# Same major as tauri 2.12 uses, so HWND types match and no second copy is built.
+windows = { version = "0.62.2", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Threading",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[features]
+# Tauri CLI enables this for `tauri build`; also used for the self-contained --measure run.
+custom-protocol = ["tauri/custom-protocol"]

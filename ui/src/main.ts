@@ -1,6 +1,7 @@
 import "./style.css";
 import "./house/credits/credits.js";
 import "./house/brand/logo/logo-resize";
+import "./preview";
 import { applyTheme, nextTheme, type Theme } from "./theme";
 
 const KEY = "theme";
