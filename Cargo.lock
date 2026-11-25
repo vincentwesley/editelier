@@ -487,6 +487,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-time"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -829,6 +836,15 @@ dependencies = [
  "tauri-build",
  "wgpu",
  "windows",
+]
+
+[[package]]
+name = "editelier-core"
+version = "0.1.0"
+dependencies = [
+ "craft-time",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
