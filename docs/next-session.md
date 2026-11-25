@@ -1,29 +1,17 @@
-> Update at the end of any session that changed state. Keep it lean.
-
-Continue work on **Editelier** (repo `vincentwesley/editelier`, local only, not pushed).
-Handover 2026-11-25: M0 scaffold + research + planning docs done (branch `m0-docs`, not merged). Only do what the owner asks.
+# Next session
 
 ## Before anything
-1. Local repo folder `editelier/` under Coding Projects. No remote yet.
-2. Read `CLAUDE.md`, then `docs/PLAN.md`, `docs/DECISIONS.md`, `docs/ACCEPTANCE.md`. Research index: `docs/RESEARCH.md`.
-3. Don't hand-edit `docs/research/`.
+Read `CLAUDE.md`, `docs/DECISIONS.md`, `docs/PLAN.md`, `docs/ACCEPTANCE.md`. Owner steps: `docs/NEEDS-VIN.md`.
 
 ## How to work here
-- Subagents on Opus (D17). Branch per step, commit locally, no push.
-- UI: `cd ui && npm ci --ignore-scripts && npm run check && npm run build`.
-- Rust: workspace not created yet; layout in `docs/PLAN.md`.
+Orchestrate; all subagents on Opus (D17). Builders work in worktrees (`.claude/worktrees/`, ignored) on `m1-*` branches. Branches forked from 06cbb44 conflict on root `Cargo.toml`/`Cargo.lock`: union the `members`, keep main's lock, run `cargo metadata`, commit.
 
-## Current state
-- M0 scaffold done; UI checks green.
-- Docs on `m0-docs`: RESEARCH, DECISIONS (D1–D19), PLAN (M1–M10), ACCEPTANCE, LEGAL-REVIEW, NEEDS-VIN, PRIVACY, HANDOVER.
-- Rust toolchain install status: check `rustc -V` / VS 2022 Build Tools before M1.
-
-## Next
-1. Merge `m0-docs` when the owner OKs it.
-2. M1 step 1: preview spike (wgpu DX12 child HWND under WebView2, D1); fallback egui/wgpu pane.
-3. Then M1 scope in `docs/PLAN.md`.
+## Current state (2026-11-25, session cut by usage limit)
+- M0 done and pushed (research, decisions D1-D19, plan, acceptance, legal, privacy).
+- Preview spike merged: wgpu DX12 child HWND above WebView2, 60 fps on Iris Xe (`docs/spikes/preview-surface.md`).
+- `m1-core` merged locally (editelier-core + vendored craft-time, 11 tests).
+- In flight when the session ended (check each branch / worktree for commits or uncommitted work; re-dispatch if incomplete): `m1-media` (probe/index/MF decode/proxies/test media), `m1-export` (MF HW encoders, presets, ebur128), `m1-ui` (editor UI with mock backend).
+- Next: merge those, then integration (Tauri commands wiring core+media+export, render crate: NV12→linear compositor + titles via glyphon, audio playback cpal + music mix), MSIX via winapp CLI, acceptance runner (`cargo xtask accept`), walkthroughs, tag v0.1.0.
 
 ## Known gaps
-- Owner steps open: trademark searches, Partner Center + name reservation (`docs/NEEDS-VIN.md`).
-- Open questions: ProRes/DNx patent status; BiRefNet LICENSE; MSIX DLL-swap interpretation for LGPL.
-- No CI until M1 end (D16). Never commit `*.pfx`.
+150% DPI untested; flicker in live drag-resize not eyeballed; no CI yet (D16).
