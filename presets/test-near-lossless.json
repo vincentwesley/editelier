@@ -1,0 +1,20 @@
+{
+  "id": "test-near-lossless",
+  "name": "Test only: near-lossless constant QP",
+  "test_only": true,
+  "width": 1920,
+  "height": 1080,
+  "fps_num": 30,
+  "fps_den": 1,
+  "video": {
+    "codec": "h264",
+    "rate_control": { "mode": "const_qp", "qp": 12 },
+    "gop_seconds": 1.0,
+    "b_frames": 0
+  },
+  "audio": null,
+  "loudness": null,
+  "source_url": "https://learn.microsoft.com/en-us/windows/win32/medfound/h-264-video-encoder",
+  "verified_on": "2026-11-25",
+  "notes": "Media Foundation H.264 encoders have no lossless (qpprime_y_zero_transform_bypass) mode, so frame-exact tests use a very low constant QP and compare with a tolerance, not bit-exact. No B-frames so decode order = display order."
+}

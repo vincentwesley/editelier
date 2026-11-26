@@ -1,0 +1,19 @@
+{
+  "id": "youtube-1080p60",
+  "name": "YouTube 1080p 60",
+  "width": 1920,
+  "height": 1080,
+  "fps_num": 60,
+  "fps_den": 1,
+  "video": {
+    "codec": "h264",
+    "rate_control": { "mode": "vbr", "bitrate_kbps": 12000, "max_bitrate_kbps": 18000 },
+    "gop_seconds": 0.5,
+    "b_frames": 2
+  },
+  "audio": { "bitrate_kbps": 384 },
+  "loudness": { "target_lufs": -14.0, "true_peak_dbtp": -1.0 },
+  "source_url": "https://support.google.com/youtube/answer/1722171",
+  "verified_on": "2026-11-25",
+  "notes": "H.264 High, 2 B-frames, closed GOP = fps/2, VBR 12 Mbps (SDR 48-60 fps), AAC-LC 48 kHz stereo 384 kbps (MF AAC encoder caps at 192 kbps)."
+}

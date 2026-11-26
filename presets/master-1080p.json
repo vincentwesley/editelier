@@ -1,0 +1,19 @@
+{
+  "id": "master-1080p",
+  "name": "High quality master 1080p",
+  "width": 1920,
+  "height": 1080,
+  "fps_num": 30,
+  "fps_den": 1,
+  "video": {
+    "codec": "h264",
+    "rate_control": { "mode": "vbr", "bitrate_kbps": 24000, "max_bitrate_kbps": 36000 },
+    "gop_seconds": 1.0,
+    "b_frames": 2
+  },
+  "audio": { "bitrate_kbps": 192 },
+  "loudness": null,
+  "source_url": "https://support.google.com/youtube/answer/1722171",
+  "verified_on": "2026-11-25",
+  "notes": "The 'High' preset of ACCEPTANCE A-QUAL-01: 3x the YouTube 1080p recommendation for archiving/re-upload. Caller overrides fps to the sequence rate. No loudness change by default."
+}

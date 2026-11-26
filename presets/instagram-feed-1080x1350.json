@@ -1,0 +1,19 @@
+{
+  "id": "instagram-feed-1080x1350",
+  "name": "Instagram feed video 1080x1350",
+  "width": 1080,
+  "height": 1350,
+  "fps_num": 30,
+  "fps_den": 1,
+  "video": {
+    "codec": "h264",
+    "rate_control": { "mode": "vbr", "bitrate_kbps": 8000, "max_bitrate_kbps": 12000 },
+    "gop_seconds": 1.0,
+    "b_frames": 2
+  },
+  "audio": { "bitrate_kbps": 192 },
+  "loudness": { "target_lufs": -14.0, "true_peak_dbtp": -1.0 },
+  "source_url": "https://help.instagram.com/1038071743007909",
+  "verified_on": "2026-11-25",
+  "notes": "4:5 sits inside Instagram's 1.91:1-9:16 range; no feed-specific official page was verified. Bitrate is our recommendation. Re-check before shipping."
+}
