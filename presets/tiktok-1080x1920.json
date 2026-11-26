@@ -1,0 +1,19 @@
+{
+  "id": "tiktok-1080x1920",
+  "name": "TikTok 1080x1920",
+  "width": 1080,
+  "height": 1920,
+  "fps_num": 30,
+  "fps_den": 1,
+  "video": {
+    "codec": "h264",
+    "rate_control": { "mode": "vbr", "bitrate_kbps": 10000, "max_bitrate_kbps": 15000 },
+    "gop_seconds": 1.0,
+    "b_frames": 2
+  },
+  "audio": { "bitrate_kbps": 192 },
+  "loudness": { "target_lufs": -14.0, "true_peak_dbtp": -1.0 },
+  "source_url": "https://ads.tiktok.com/help/article/video-ads-specifications?lang=en",
+  "verified_on": "2026-11-25",
+  "notes": "Official figures are ads specs only (>=540x960, >=516 kbps auction / >=2.5 Mbps reservation, AAC 48 kHz). 8-10 Mbps is our recommendation; organic-upload specs are not published. Re-check before shipping."
+}

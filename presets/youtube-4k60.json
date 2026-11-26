@@ -1,0 +1,19 @@
+{
+  "id": "youtube-4k60",
+  "name": "YouTube 4K 60",
+  "width": 3840,
+  "height": 2160,
+  "fps_num": 60,
+  "fps_den": 1,
+  "video": {
+    "codec": "h264",
+    "rate_control": { "mode": "vbr", "bitrate_kbps": 60000, "max_bitrate_kbps": 90000 },
+    "gop_seconds": 0.5,
+    "b_frames": 2
+  },
+  "audio": { "bitrate_kbps": 384 },
+  "loudness": { "target_lufs": -14.0, "true_peak_dbtp": -1.0 },
+  "source_url": "https://support.google.com/youtube/answer/1722171",
+  "verified_on": "2026-11-25",
+  "notes": "YouTube recommends 53-68 Mbps for 2160p SDR 48-60 fps; 60 Mbps used. H.264 High, 2 B-frames, closed GOP = fps/2."
+}
