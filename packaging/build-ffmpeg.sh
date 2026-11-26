@@ -14,7 +14,8 @@ ffbuild_configure() {
     --disable-encoder=aac,h264_amf,h264_mf,h264_nvenc,h264_qsv,h264_vaapi,hevc_amf,hevc_mf,hevc_nvenc,hevc_qsv,hevc_vaapi \
     --disable-parser=h264,hevc,aac,aac_latm \
     --disable-hwaccel=h264_d3d11va,h264_d3d11va2,h264_d3d12va,h264_dxva2,h264_nvdec,h264_vulkan,hevc_d3d11va,hevc_d3d11va2,hevc_d3d12va,hevc_dxva2,hevc_nvdec,hevc_vulkan \
-    --disable-ffplay
+    --disable-ffplay \
+    --disable-network
 }
 EOF
 cd "$work/btbn"

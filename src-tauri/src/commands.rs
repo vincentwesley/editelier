@@ -95,9 +95,16 @@ fn file_name_ok(name: &str) -> bool {
 impl Core {
     pub fn new(dirs: Dirs, gpu: Option<Gpu>) -> Arc<Self> {
         let lib = Library::default();
+        let engine = Engine::new(lib.clone());
+        if let Some(i) = gpu
+            .as_ref()
+            .and_then(|g| editelier_render::Interop::new(g).ok())
+        {
+            let _ = engine.interop.set(i);
+        }
         Arc::new(Core {
             doc: Mutex::new(None),
-            engine: Engine::new(lib.clone()),
+            engine,
             lib,
             tools: Tools::locate().map_err(|e| eprintln!("{e}")).ok(),
             dirs,
@@ -363,7 +370,8 @@ impl Core {
         let mut entries = HashMap::new();
         for m in p.media.iter() {
             // Missing or unreadable media stays in the project; it just shows nothing.
-            if let Ok(e) = library::check_media_path(&m.path)
+            // Local disk only (never a share): see `check_project_media_path`.
+            if let Ok(e) = library::check_project_media_path(&m.path)
                 .and_then(|path| library::load(&tools, &self.dirs.cache, &plain(path)))
             {
                 entries.insert(m.id, Arc::new(e));
@@ -948,5 +956,35 @@ mod tests {
         assert_eq!(s["project"]["name"], "Holiday");
         assert!(c.recent().iter().any(|r| r.path.ends_with("t.editelier")));
         assert!(iso_now().ends_with('Z') && iso_now().len() == 20);
+    }
+
+    #[test]
+    fn project_with_share_media_opens_offline() {
+        use editelier_core::{MediaKind, MediaMeta, MediaRef};
+        let c = core();
+        if c.tools.is_none() {
+            return eprintln!("SKIP: no FFmpeg helper");
+        }
+        let mut p = Project::new(Settings::default());
+        // TEST-NET address: a filesystem call on it would stall for seconds, not fail fast.
+        p.media = Arc::new(vec![MediaRef {
+            id: "1".parse().unwrap(),
+            path: r"\\192.0.2.1@SSL\share\a.mp4".into(),
+            meta: MediaMeta {
+                kind: MediaKind::Video,
+                duration: Tick(1),
+                fps: None,
+                is_vfr: false,
+                has_audio: false,
+            },
+        }]);
+        let file = std::env::temp_dir()
+            .join("editelier-commands-test")
+            .join("unc.editelier");
+        std::fs::write(&file, editelier_core::to_json(&p)).unwrap();
+        let t = std::time::Instant::now();
+        let s = serde_json::to_value(c.open(None, file.to_str().unwrap()).unwrap()).unwrap();
+        assert!(t.elapsed().as_millis() < 1000, "touched the share");
+        assert_eq!(s["project"]["media"][0]["offline"], true);
     }
 }

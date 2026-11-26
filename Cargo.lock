@@ -1043,6 +1043,8 @@ dependencies = [
  "png",
  "pollster",
  "wgpu",
+ "windows",
+ "windows-core",
 ]
 
 [[package]]

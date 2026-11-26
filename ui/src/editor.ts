@@ -196,7 +196,7 @@ function renderBin(p: Project): void {
         h(
           "span",
           { class: "bin__meta" },
-          h("span", { class: "bin__name" }, m.name),
+          h("span", { class: "bin__name" }, m.offline ? `${m.name} (offline)` : m.name),
           h(
             "span",
             { class: "bin__badges" },

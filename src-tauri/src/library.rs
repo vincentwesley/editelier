@@ -8,9 +8,9 @@ use editelier_media::{
     AudioBuffer, Frame, FrameData, Index, PixelFormat, ProbeInfo, Rational, Tools, VideoStream,
     cache, ffmpeg, win,
 };
-use editelier_render::{Orient, Pixels, SourceColor, SourceFrame};
+use editelier_render::{GpuImage, Interop, Orient, Pixels, SourceColor, SourceFrame};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf, Prefix};
 use std::sync::{Arc, RwLock};
 use windows::Win32::Graphics::Direct3D11::ID3D11Device;
 
@@ -84,6 +84,48 @@ pub fn check_media_path(raw: &str) -> ApiResult<PathBuf> {
         ));
     }
     Ok(p)
+}
+
+/// A media path read from a project file (untrusted): local disk only. The shape is checked on
+/// the raw string before any filesystem call, because merely touching `\\host\x` (or WebDAV
+/// `\\host@SSL\x`) sends the user's NTLM hash and IP to that host. A canonical path that turns
+/// out to be a share (mapped network drive) is refused too.
+pub fn check_project_media_path(raw: &str) -> ApiResult<PathBuf> {
+    local_shape(raw)?;
+    let p = check_media_path(raw)?;
+    if matches!(p.components().next(), Some(Component::Prefix(x))
+        if matches!(x.kind(), Prefix::UNC(..) | Prefix::VerbatimUNC(..)))
+    {
+        return Err(not_local(raw));
+    }
+    Ok(p)
+}
+
+/// String-only check (no filesystem access): `C:\...` with a media extension.
+fn local_shape(raw: &str) -> ApiResult<()> {
+    let p = Path::new(raw);
+    let disk = matches!(p.components().next(), Some(Component::Prefix(x))
+        if matches!(x.kind(), Prefix::Disk(_)));
+    if raw.starts_with(r"\\")
+        || raw.starts_with("//")
+        || raw.len() > 4096
+        || raw.contains('\0')
+        || !p.is_absolute()
+        || !disk
+    {
+        return Err(not_local(raw));
+    }
+    if !MEDIA_EXTS.contains(&ext(p).as_str()) {
+        return Err(ApiError::new(
+            "unsupported_codec",
+            format!("{raw}: Editelier can't open this kind of file."),
+        ));
+    }
+    Ok(())
+}
+
+fn not_local(raw: &str) -> ApiError {
+    ApiError::new("media_offline", format!("{raw} isn't on this PC's drives."))
 }
 
 fn frame_rate(v: &VideoStream) -> Option<FrameRate> {
@@ -355,6 +397,8 @@ pub struct OwnedFrame {
     pub stride: usize,
     pub color: SourceColor,
     pub orient: Orient,
+    /// Zero-copy NV12 on the render GPU (then `bytes` is empty).
+    pub gpu: Option<GpuImage>,
 }
 
 impl OwnedFrame {
@@ -363,10 +407,11 @@ impl OwnedFrame {
         SourceFrame {
             width: self.width,
             height: self.height,
-            pixels: match self.format {
-                PixelFormat::Nv12 => Pixels::Nv12 { data, stride },
-                PixelFormat::P010 => Pixels::P010 { data, stride },
-                PixelFormat::Rgba8 => Pixels::Rgba8 { data, stride },
+            pixels: match (&self.gpu, self.format) {
+                (Some(g), _) => Pixels::Gpu(g),
+                (None, PixelFormat::Nv12) => Pixels::Nv12 { data, stride },
+                (None, PixelFormat::P010) => Pixels::P010 { data, stride },
+                (None, PixelFormat::Rgba8) => Pixels::Rgba8 { data, stride },
             },
             color: self.color,
             orient: self.orient,
@@ -383,10 +428,12 @@ pub fn pts_at(index: &Index, t: Tick) -> i64 {
 }
 
 /// Decoders for one thread (Media Foundation decoders aren't `Send`). Uses `device` for DXVA
-/// decode and reads frames back to the CPU.
+/// decode and reads frames back to the CPU, or with [`zero_copy`](Self::zero_copy) hands NV12
+/// frames to the renderer's GPU without leaving it.
 pub struct Decoders {
     tools: Tools,
     device: Option<ID3D11Device>,
+    interop: Option<Interop>,
     open: HashMap<PathBuf, win::VideoDecoder>,
     stills: HashMap<PathBuf, Arc<OwnedFrame>>,
 }
@@ -396,8 +443,18 @@ impl Decoders {
         Decoders {
             tools,
             device,
+            interop: None,
             open: HashMap::new(),
             stills: HashMap::new(),
+        }
+    }
+
+    /// Decode on `interop`'s device and keep NV12 frames on the GPU (P010 is still read back).
+    pub fn zero_copy(tools: Tools, interop: Interop) -> Self {
+        Decoders {
+            device: Some(interop.device().clone()),
+            interop: Some(interop),
+            ..Self::new(tools, None)
         }
     }
 
@@ -436,7 +493,7 @@ impl Decoders {
             }
             match win::VideoDecoder::open(path, v, index.clone(), self.device.as_ref()) {
                 Ok(mut d) => {
-                    d.set_cpu_readback(true);
+                    d.set_cpu_readback(self.interop.is_none());
                     self.open.insert(path.clone(), d);
                 }
                 Err(err) => {
@@ -448,7 +505,31 @@ impl Decoders {
             }
         }
         let d = self.open.get_mut(path).expect("inserted above");
-        let f = d.frame_at(pts)?;
+        let mut f = d.frame_at(pts)?;
+        if let FrameData::D3D11(g) = &f.data {
+            if let (Some(i), PixelFormat::Nv12) = (&self.interop, f.format) {
+                let img = i
+                    .import(&g.texture, g.subresource, (f.width, f.height))
+                    .map_err(|e| ApiError::new("media_error", e.to_string()))?;
+                let (width, height) = img.size();
+                return Ok(Arc::new(OwnedFrame {
+                    key: (f.pts, used_proxy),
+                    width,
+                    height,
+                    format: f.format,
+                    bytes: Vec::new(),
+                    stride: 0,
+                    color: if used_proxy {
+                        SourceColor::from_tags(Some("bt709"), Some("tv"), height)
+                    } else {
+                        e.color
+                    },
+                    orient,
+                    gpu: Some(img),
+                }));
+            }
+            f = d.to_cpu(&f)?;
+        }
         let color = if used_proxy {
             // Proxies are encoded BT.709 limited by Media Foundation.
             SourceColor::from_tags(Some("bt709"), Some("tv"), f.height)
@@ -472,6 +553,7 @@ fn own(f: Frame, color: SourceColor, proxy: bool, orient: Orient) -> ApiResult<O
         stride,
         color,
         orient,
+        gpu: None,
     })
 }
 
@@ -531,12 +613,19 @@ mod tests {
         let e = load(&tools, &cache, &path).unwrap();
         let v = &e.probe.video[0];
         assert_eq!(v.display_size(), (360, 640));
-        let mut dec = Decoders::new(tools, None);
-        let f = dec.decode(&e, Tick(TICKS_PER_SECOND / 2), false).unwrap();
-        assert_eq!((f.width, f.height, f.orient), (640, 360, Orient(6)));
         let Ok(gpu) = Gpu::headless() else {
             return eprintln!("SKIP: no GPU");
         };
+        // Zero-copy when the adapter supports it (`EDITELIER_ZERO_COPY=0` forces the CPU path).
+        let mut dec = match Interop::new(&gpu) {
+            Ok(i) => Decoders::zero_copy(tools, i),
+            Err(_) => Decoders::new(tools, None),
+        };
+        let f = dec.decode(&e, Tick(TICKS_PER_SECOND / 2), false).unwrap();
+        assert_eq!((f.width, f.height, f.orient), (640, 360, Orient(6)));
+        if std::env::var_os("EDITELIER_ZERO_COPY").is_some_and(|v| v == "1") {
+            assert!(f.gpu.is_some(), "zero-copy path not taken");
+        }
         let mut r = Renderer::new(&gpu, Fonts::bundled());
         r.upload(&f.source()).unwrap();
         let (w, h) = v.display_size();
@@ -599,5 +688,35 @@ mod tests {
             check_media_path(exe.to_str().unwrap()).unwrap_err().code,
             "unsupported_codec"
         );
+    }
+
+    #[test]
+    fn project_media_paths_are_local_only() {
+        let dir = std::env::temp_dir().join("editelier-local-path-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let ok = dir.join("a.mp4");
+        std::fs::write(&ok, b"x").unwrap();
+        let ok = plain_str(&ok);
+        for bad in [
+            r"\\host\share\a.mp4",
+            r"\\?\UNC\host\share\a.mp4",
+            r"\\host@SSL\x\a.mp4",
+            r"\\host@80\x\a.mp4",
+            "//host/x.mp4",
+            r"media\a.mp4",
+            r"\a.mp4",
+        ] {
+            // String-only rejection: no filesystem call ever reaches the host.
+            assert_eq!(local_shape(bad).unwrap_err().code, "media_offline", "{bad}");
+            assert!(check_project_media_path(bad).is_err(), "{bad}");
+        }
+        assert!(local_shape(r"C:\x\a.exe").is_err());
+        assert!(check_project_media_path(&ok).is_ok(), "{ok}");
+    }
+
+    fn plain_str(p: &Path) -> String {
+        crate::commands::plain(std::fs::canonicalize(p).unwrap())
+            .display()
+            .to_string()
     }
 }

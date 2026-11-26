@@ -46,6 +46,8 @@ export interface MediaRef {
   proxy: ProxyState;
   /** URL the webview can load (Tauri asset protocol, or data: in the mock). */
   thumbnail: string | null;
+  /** Missing, unreadable or not on a local drive (project paths never reach network shares). */
+  offline?: boolean;
 }
 
 /** Main track clip. The main track is magnetic: its position is the sum of the clips before it. */

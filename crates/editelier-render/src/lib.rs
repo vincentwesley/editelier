@@ -6,14 +6,18 @@
 //! The device is the caller's: the preview creates one for its surface and shares it, export and
 //! tests use [`Gpu::headless`].
 //!
-//! ponytail: decoded GPU frames reach wgpu through a CPU staging copy (D3D11 map → `write_texture`),
-//! not a shared NT handle. Zero-copy (D3D11 shared texture → D3D12 resource → `create_texture_from_hal`
-//! + fence) when 4K originals in preview or export throughput need it.
+//! Decoded D3D11 frames and export output cross between Media Foundation and wgpu without a CPU
+//! copy through [`Interop`] (shared NT-handle NV12 textures + two shared fences, same adapter);
+//! CPU frames ([`Pixels::Nv12`] etc.) remain the fallback when interop isn't available.
 
+#[cfg(windows)]
+mod interop;
 mod orient;
 mod quality;
 mod text;
 
+#[cfg(windows)]
+pub use interop::{GpuImage, Interop, Nv12Frame};
 pub use orient::Orient;
 pub use quality::ssim;
 pub use text::Fonts;
@@ -46,9 +50,11 @@ pub struct Gpu {
 }
 
 impl Gpu {
-    /// Features the renderer uses when the adapter has them (P010 needs 16-bit norm textures).
+    /// Features the renderer uses when the adapter has them (P010 needs 16-bit norm textures,
+    /// zero-copy decode NV12 textures).
     pub fn wanted_features(adapter: &wgpu::Adapter) -> wgpu::Features {
-        adapter.features() & wgpu::Features::TEXTURE_FORMAT_16BIT_NORM
+        adapter.features()
+            & (wgpu::Features::TEXTURE_FORMAT_16BIT_NORM | wgpu::Features::TEXTURE_FORMAT_NV12)
     }
 
     /// DX12 device on the high-performance adapter (any DX12 adapter can present to an HWND).
@@ -123,9 +129,21 @@ impl SourceColor {
 /// `stride` bytes (the media crate's CPU frame layout). RGBA: straight alpha, R'G'B' code values.
 #[derive(Clone, Copy, Debug)]
 pub enum Pixels<'a> {
-    Nv12 { data: &'a [u8], stride: usize },
-    P010 { data: &'a [u8], stride: usize },
-    Rgba8 { data: &'a [u8], stride: usize },
+    Nv12 {
+        data: &'a [u8],
+        stride: usize,
+    },
+    P010 {
+        data: &'a [u8],
+        stride: usize,
+    },
+    Rgba8 {
+        data: &'a [u8],
+        stride: usize,
+    },
+    /// NV12 already on this renderer's GPU (zero-copy decode).
+    #[cfg(windows)]
+    Gpu(&'a GpuImage),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -246,6 +264,7 @@ pub struct Renderer {
     orient: Orient,
     show_clip: bool,
     canvas: Option<wgpu::Texture>,
+    nv12_buf: Option<wgpu::Buffer>,
     titles: TitleCache,
     pub fit: Fit,
 }
@@ -335,6 +354,7 @@ impl Renderer {
             orient: Orient::default(),
             show_clip: false,
             canvas: None,
+            nv12_buf: None,
             titles: TitleCache::new(fonts),
             fit: Fit::Contain,
         }
@@ -355,14 +375,13 @@ impl Renderer {
             return Err(RenderError("empty frame".into()));
         }
         let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
-        let (kind, fa, fb, code_scale, data, stride) = match f.pixels {
+        let (kind, fa, fb, code_scale, cpu) = match f.pixels {
             Pixels::Nv12 { data, stride } => (
                 0u8,
                 wgpu::TextureFormat::R8Unorm,
                 wgpu::TextureFormat::Rg8Unorm,
                 255.0,
-                data,
-                stride,
+                Some((data, stride)),
             ),
             Pixels::P010 { data, stride } => {
                 if !self
@@ -380,8 +399,7 @@ impl Renderer {
                     wgpu::TextureFormat::R16Unorm,
                     wgpu::TextureFormat::Rg16Unorm,
                     65535.0 / 256.0,
-                    data,
-                    stride,
+                    Some((data, stride)),
                 )
             }
             Pixels::Rgba8 { data, stride } => (
@@ -389,8 +407,15 @@ impl Renderer {
                 wgpu::TextureFormat::Rgba8Unorm,
                 wgpu::TextureFormat::Rgba8Unorm,
                 255.0,
-                data,
-                stride,
+                Some((data, stride)),
+            ),
+            #[cfg(windows)]
+            Pixels::Gpu(_) => (
+                3,
+                wgpu::TextureFormat::R8Unorm,
+                wgpu::TextureFormat::Rg8Unorm,
+                255.0,
+                None,
             ),
         };
         let bpp = fa.block_copy_size(None).unwrap_or(1) as usize;
@@ -399,7 +424,9 @@ impl Renderer {
         } else {
             (h + ch) as usize
         };
-        if stride < w as usize * bpp || data.len() < stride * (rows - 1) + w as usize * bpp {
+        if let Some((data, stride)) = cpu
+            && (stride < w as usize * bpp || data.len() < stride * (rows - 1) + w as usize * bpp)
+        {
             return Err(RenderError("frame buffer is smaller than its size".into()));
         }
         let device = &self.gpu.device;
@@ -409,11 +436,17 @@ impl Renderer {
             .is_some_and(|c| c.size == (w, h) && c.kind == kind)
         {
             let usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
-            let b_size = if kind == 2 { (1, 1) } else { (cw, ch) };
+            // GPU frames bring their own planes.
+            let a_size = if kind == 3 { (1, 1) } else { (w, h) };
+            let b_size = if matches!(kind, 2 | 3) {
+                (1, 1)
+            } else {
+                (cw, ch)
+            };
             self.clip = Some(Clip {
                 size: (w, h),
                 kind,
-                a: texture(device, "clip-a", (w, h), fa, usage),
+                a: texture(device, "clip-a", a_size, fa, usage),
                 b: texture(device, "clip-b", b_size, fb, usage),
                 out: texture(
                     device,
@@ -425,39 +458,42 @@ impl Renderer {
             });
         }
         let clip = self.clip.as_ref().expect("clip set above");
-        let write = |t: &wgpu::Texture, offset: usize, size: (u32, u32)| {
-            self.gpu.queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: t,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &data[offset..],
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(stride as u32),
-                    rows_per_image: None,
-                },
-                wgpu::Extent3d {
-                    width: size.0,
-                    height: size.1,
-                    depth_or_array_layers: 1,
-                },
-            );
-        };
-        write(&clip.a, 0, (w, h));
-        if kind != 2 {
-            write(&clip.b, stride * h as usize, (cw, ch));
+        if let Some((data, stride)) = cpu {
+            let write = |t: &wgpu::Texture, offset: usize, size: (u32, u32)| {
+                self.gpu.queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: t,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    &data[offset..],
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(stride as u32),
+                        rows_per_image: None,
+                    },
+                    wgpu::Extent3d {
+                        width: size.0,
+                        height: size.1,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            };
+            write(&clip.a, 0, (w, h));
+            if kind != 2 {
+                write(&clip.b, stride * h as usize, (cw, ch));
+            }
         }
         let (kr, kb) = f.color.matrix.kr_kb();
         let mut u = floats(&[kr, kb, code_scale, f.color.full_range as u32 as f32]);
         u.extend(words(&[(kind == 2) as u32, 0, 0, 0]));
         let ubuf = uniform(device, &u);
-        let b_view = if kind == 2 {
-            Self::view(&self.dummy)
-        } else {
-            Self::view(&clip.b)
+        let (a_view, b_view) = match f.pixels {
+            #[cfg(windows)]
+            Pixels::Gpu(img) => img.views(),
+            _ if kind == 2 => (Self::view(&clip.a), Self::view(&self.dummy)),
+            _ => (Self::view(&clip.a), Self::view(&clip.b)),
         };
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("clip"),
@@ -465,7 +501,7 @@ impl Renderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&Self::view(&clip.a)),
+                    resource: wgpu::BindingResource::TextureView(&a_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -489,7 +525,13 @@ impl Renderer {
             pass.set_bind_group(0, &bind, &[]);
             pass.draw(0..3, 0..1);
         }
-        self.gpu.queue.submit([enc.finish()]);
+        match f.pixels {
+            #[cfg(windows)]
+            Pixels::Gpu(img) => img.submit(enc.finish())?,
+            _ => {
+                self.gpu.queue.submit([enc.finish()]);
+            }
+        }
         self.orient = f.orient;
         self.show_clip = true;
         Ok(())
@@ -690,28 +732,78 @@ impl Renderer {
     /// The canvas as tightly packed NV12 (Y then interleaved CbCr), BT.709 limited range.
     /// The canvas width must be a multiple of 4 and the height even.
     pub fn read_nv12(&mut self) -> Result<Vec<u8>> {
+        let (w, h) = self.nv12_size()?;
+        let len = (w * h * 3 / 2) as u64;
+        let read = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("nv12-read"),
+            size: len,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let (mut enc, out) = self.encode_nv12(w)?;
+        enc.copy_buffer_to_buffer(&out, 0, &read, 0, len);
+        self.gpu.queue.submit([enc.finish()]);
+        self.map(&read)
+    }
+
+    /// The canvas as NV12 BT.709 limited range in a shared texture, GPU only (zero-copy export):
+    /// hand it to the encoder side with [`Interop::copy_out`]. Same size rules as
+    /// [`read_nv12`](Self::read_nv12).
+    #[cfg(windows)]
+    pub fn render_nv12(&mut self, interop: &Interop) -> Result<Nv12Frame> {
+        let (w, h) = self.nv12_size()?;
+        let pitch = w.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let slot = interop.out_slot((w, h))?;
+        let (mut enc, out) = self.encode_nv12(pitch)?;
+        let (y, uv) = slot.planes();
+        for (t, offset, rows) in [(y, 0, h), (uv, pitch as u64 * h as u64, h / 2)] {
+            enc.copy_buffer_to_texture(
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &out,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset,
+                        bytes_per_row: Some(pitch),
+                        rows_per_image: Some(rows),
+                    },
+                },
+                t.as_image_copy(),
+                t.size(),
+            );
+        }
+        slot.submit(interop, enc.finish())
+    }
+
+    fn nv12_size(&self) -> Result<(u32, u32)> {
         let (w, h) = self.canvas_size()?;
         if !w.is_multiple_of(4) || !h.is_multiple_of(2) {
             return Err(RenderError(format!(
                 "export size {w}x{h}: width must be a multiple of 4 and height even"
             )));
         }
-        let len = (w * h * 3 / 2) as u64;
+        Ok((w, h))
+    }
+
+    /// Records canvas -> NV12 (Y rows then CbCr rows, `pitch` bytes each) into the cached
+    /// storage buffer.
+    fn encode_nv12(&mut self, pitch: u32) -> Result<(wgpu::CommandEncoder, wgpu::Buffer)> {
+        let (w, h) = self.nv12_size()?;
+        let len = pitch as u64 * h as u64 * 3 / 2;
         let device = &self.gpu.device;
-        let out = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("nv12"),
-            size: len,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-        let read = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("nv12-read"),
-            size: len,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let ubuf = uniform(device, &words(&[w, h, 0, 0]));
-        let canvas = Self::view(self.canvas.as_ref().expect("checked above"));
+        let out = match &self.nv12_buf {
+            Some(b) if b.size() == len => b.clone(),
+            _ => {
+                let b = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("nv12"),
+                    size: len,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                });
+                self.nv12_buf = Some(b.clone());
+                b
+            }
+        };
+        let ubuf = uniform(device, &words(&[w, h, pitch, 0]));
+        let canvas = Self::view(self.canvas.as_ref().expect("checked by nv12_size"));
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("nv12"),
             layout: &self.nv12_pipe.get_bind_group_layout(0),
@@ -737,9 +829,7 @@ impl Renderer {
             pass.set_bind_group(0, &bind, &[]);
             pass.dispatch_workgroups((w / 4).div_ceil(8), (h / 2).div_ceil(8), 1);
         }
-        enc.copy_buffer_to_buffer(&out, 0, &read, 0, len);
-        self.gpu.queue.submit([enc.finish()]);
-        self.map(&read)
+        Ok((enc, out))
     }
 
     fn map(&self, buf: &wgpu::Buffer) -> Result<Vec<u8>> {
