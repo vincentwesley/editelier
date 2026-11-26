@@ -1,15 +1,18 @@
 //! Export job: renders every output frame at constant frame rate from the original media (never
 //! proxies), mixes the audio once (optional loudness normalise to the preset target), and feeds
-//! the Media Foundation exporter (D3, D4, D6).
+//! the Media Foundation exporter (D3, D4, D6). Decode, render and encode are pipelined stages;
+//! frames stay on the GPU end to end where the hardware allows (A-PERF-03/04).
 
 use crate::api::{ApiError, ApiResult};
-use crate::library::{Decoders, MediaEntry, decode_device};
+use crate::library::{Decoders, MediaEntry, OwnedFrame, decode_device};
 use crate::mix;
 use editelier_core::{FrameRate, Id, Layer, Project, Tick, TitleClip};
-use editelier_export::win::{ExportOptions, Exporter};
+use editelier_export::win::{
+    ExportOptions, ExportStats, Exporter, device_manager_for, enumerate_encoders,
+};
 use editelier_export::{CancelToken, ExportError, Preset, loudness};
 use editelier_media::Tools;
-use editelier_render::{Fonts, Gpu, Renderer};
+use editelier_render::{Fonts, Gpu, Interop, Nv12Frame, Renderer};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -75,7 +78,55 @@ fn frame_sample(fps: FrameRate, n: i64) -> i64 {
     (n as i128 * mix::RATE as i128 * fps.den as i128 / fps.num as i128) as i64
 }
 
-/// Runs the whole export on the calling thread. `progress(0..=1)` after each frame.
+/// Audio for the whole range, mixed once so loudness can be measured first.
+fn mix_audio(job: &Job, f0: i64, total: i64) -> ApiResult<Option<Vec<f32>>> {
+    let (p, preset) = (&job.project, &job.preset);
+    if preset.audio.is_none() {
+        return Ok(None);
+    }
+    let fps = p.settings.fps;
+    let s0 = mix::sample_of(fps.tick_of(f0));
+    let n = frame_sample(fps, total) as usize;
+    let mut buf = vec![0f32; n * 2];
+    mix::mix(p, &job.media, s0, &mut buf);
+    if let Some(target) = preset.loudness {
+        let r = loudness::measure(&buf, target).map_err(export_err)?;
+        // ponytail: no true-peak limiter; lower the gain to respect the ceiling instead.
+        let gain = if r.needs_limiter {
+            r.gain_db.min(target.true_peak_dbtp - r.true_peak_dbtp)
+        } else {
+            r.gain_db
+        };
+        if gain.is_finite() && gain != 0.0 {
+            let g = loudness::db_to_linear(gain);
+            buf.iter_mut().for_each(|s| *s *= g);
+        }
+    }
+    Ok(Some(buf))
+}
+
+/// A rendered frame on its way to the encoder.
+enum Out {
+    Gpu(Nv12Frame),
+    Cpu(Vec<u8>),
+}
+
+/// Frames queued between pipeline stages (each queue holds this many).
+const QUEUE: usize = 3;
+
+fn render_err(e: editelier_render::RenderError) -> ApiError {
+    ApiError::new("export_failed", e.to_string())
+}
+
+fn joined<T>(h: std::thread::ScopedJoinHandle<'_, ApiResult<T>>) -> ApiResult<T> {
+    h.join()
+        .unwrap_or_else(|_| Err(ApiError::new("export_failed", "Export worker crashed.")))
+}
+
+/// Runs the whole export: decode-ahead, render (calling thread), encode and the audio mix run
+/// as overlapping stages with bounded queues. Decoded frames and NV12 output stay on the GPU
+/// when [`Interop`] works on this adapter and the encoder is a hardware MFT on the same one;
+/// otherwise frames go through the CPU. `progress(0..=1)` after each rendered frame.
 pub fn run(job: Job, tools: Tools, gpu: &Gpu, mut progress: impl FnMut(f32)) -> ApiResult<Done> {
     let started = Instant::now();
     let p = &job.project;
@@ -90,100 +141,171 @@ pub fn run(job: Job, tools: Tools, gpu: &Gpu, mut progress: impl FnMut(f32)) -> 
     }
     let preset = &job.preset;
     let size = (preset.width, preset.height);
-
-    // Audio for the whole range, mixed once so loudness can be measured first.
-    let audio = if preset.audio.is_some() {
-        let s0 = mix::sample_of(fps.tick_of(f0));
-        let n = frame_sample(fps, total) as usize;
-        let mut buf = vec![0f32; n * 2];
-        mix::mix(p, &job.media, s0, &mut buf);
-        if let Some(target) = preset.loudness {
-            let r = loudness::measure(&buf, target).map_err(export_err)?;
-            // ponytail: no true-peak limiter; lower the gain to respect the ceiling instead.
-            let gain = if r.needs_limiter {
-                r.gain_db.min(target.true_peak_dbtp - r.true_peak_dbtp)
-            } else {
-                r.gain_db
-            };
-            if gain.is_finite() && gain != 0.0 {
-                let g = loudness::db_to_linear(gain);
-                buf.iter_mut().for_each(|s| *s *= g);
-            }
-        }
-        Some(buf)
-    } else {
-        None
-    };
-
-    let mut exporter = Exporter::new(
-        &job.path,
-        preset,
-        ExportOptions {
-            total_frames: Some(total as u64),
-            cancel: job.cancel.clone(),
-            ..Default::default()
-        },
-    )
-    .map_err(export_err)?;
-    let encoder = exporter.encoder().0.to_owned();
-    let mut renderer = Renderer::new(gpu, Fonts::bundled());
-    let mut dec = Decoders::new(tools, decode_device());
-    let mut last: Option<(Id, (i64, bool))> = None;
+    let encoder = enumerate_encoders(preset.video.codec)
+        .map_err(export_err)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| export_err(ExportError::Unsupported("no video encoder".into())))?;
+    let interop = Interop::new(gpu)
+        .map_err(|e| eprintln!("export: zero-copy off ({e})"))
+        .ok();
+    // GPU output needs the encoder on the shared device's adapter.
+    let gpu_out = interop
+        .as_ref()
+        .filter(|i| encoder.hardware && encoder.adapter_luid.is_none_or(|l| l == i.adapter_luid()));
+    let shared_device = gpu_out.map(|i| i.device().clone());
     let title_scale = preset.height as f32 / p.settings.height.max(1) as f32;
-    for n in 0..total {
-        if job.cancel.is_cancelled() {
-            return Err(export_err(ExportError::Cancelled));
-        }
-        let layers = p.layers_at(fps.tick_of(f0 + n));
-        let mut titles: Vec<&TitleClip> = Vec::new();
-        let mut video = None;
-        for l in &layers {
-            match l {
-                Layer::Video {
-                    media, source_time, ..
-                } => video = Some((*media, *source_time)),
-                Layer::Title(t) => titles.push(t),
-                Layer::Music { .. } => {}
-            }
-        }
-        match video.and_then(|(m, st)| Some((m, st, job.media.get(&m)?))) {
-            Some((m, st, e)) => {
-                let f = dec.decode(e, st, false)?;
-                if last != Some((m, f.key)) {
-                    renderer
-                        .upload(&f.source())
-                        .map_err(|e| ApiError::new("export_failed", e.to_string()))?;
-                    last = Some((m, f.key));
+    let cancel = &job.cancel;
+    let job = &job;
+
+    std::thread::scope(|s| {
+        let audio = s.spawn(|| mix_audio(job, f0, total));
+        let (vtx, vrx) = std::sync::mpsc::sync_channel::<Option<(Id, Arc<OwnedFrame>)>>(QUEUE);
+        let dec_interop = interop.clone();
+        let decode = s.spawn(move || -> ApiResult<f64> {
+            let mut busy = 0.0;
+            let mut dec = match dec_interop {
+                Some(i) => Decoders::zero_copy(tools, i),
+                None => Decoders::new(tools, decode_device()),
+            };
+            for n in 0..total {
+                let video = job
+                    .project
+                    .layers_at(fps.tick_of(f0 + n))
+                    .into_iter()
+                    .find_map(|l| match l {
+                        Layer::Video {
+                            media, source_time, ..
+                        } => Some((media, source_time)),
+                        _ => None,
+                    });
+                let t = Instant::now();
+                let pic = match video.and_then(|(m, st)| Some((m, st, job.media.get(&m)?))) {
+                    Some((m, st, e)) => Some((m, dec.decode(e, st, false)?)),
+                    None => None,
+                };
+                busy += t.elapsed().as_secs_f64();
+                if vtx.send(pic).is_err() {
+                    break; // render stopped
                 }
             }
-            None => {
-                renderer.clear_clip();
-                last = None;
+            Ok(busy)
+        });
+        let (etx, erx) = std::sync::mpsc::sync_channel::<Out>(QUEUE);
+        let encode = s.spawn(move || -> ApiResult<(ExportStats, f64)> {
+            let mut exporter = Exporter::new(
+                &job.path,
+                &job.preset,
+                ExportOptions {
+                    encoder: Some(encoder),
+                    // Built here: MF device managers aren't `Send`.
+                    device_manager: match &shared_device {
+                        Some(d) => Some(device_manager_for(d).map_err(export_err)?),
+                        None => None,
+                    },
+                    total_frames: Some(total as u64),
+                    cancel: job.cancel.clone(),
+                    ..Default::default()
+                },
+            )
+            .map_err(export_err)?;
+            let audio = joined(audio)?;
+            let (mut n, mut busy) = (0, 0.0);
+            for out in erx {
+                let t = Instant::now();
+                match out {
+                    Out::Gpu(f) => exporter.push_video_copy(|dst, sub| {
+                        f.interop()
+                            .copy_out(&f, dst, sub)
+                            .map_err(|e| ExportError::Media(e.0))
+                    }),
+                    Out::Cpu(nv12) => exporter.push_video_nv12(&nv12),
+                }
+                .map_err(export_err)?;
+                if let Some(a) = &audio {
+                    let (s0, s1) = (
+                        frame_sample(fps, n) as usize,
+                        frame_sample(fps, n + 1) as usize,
+                    );
+                    if s1 > s0 {
+                        exporter
+                            .push_audio(&a[s0 * 2..s1 * 2])
+                            .map_err(export_err)?;
+                    }
+                }
+                busy += t.elapsed().as_secs_f64();
+                n += 1;
             }
-        }
-        renderer.compose(size, &titles, title_scale);
-        let nv12 = renderer
-            .read_nv12()
-            .map_err(|e| ApiError::new("export_failed", e.to_string()))?;
-        exporter.push_video_nv12(&nv12).map_err(export_err)?;
-        if let Some(a) = &audio {
-            let (s0, s1) = (
-                frame_sample(fps, n) as usize,
-                frame_sample(fps, n + 1) as usize,
-            );
-            if s1 > s0 {
-                exporter
-                    .push_audio(&a[s0 * 2..s1 * 2])
-                    .map_err(export_err)?;
+            if n != total {
+                // Render stopped early: dropping the exporter deletes the partial file.
+                return Err(export_err(ExportError::Cancelled));
             }
-        }
-        progress((n + 1) as f32 / total as f32);
-    }
-    let stats = exporter.finish().map_err(export_err)?;
-    Ok(Done {
-        frames: stats.frames,
-        seconds: started.elapsed().as_secs_f64(),
-        encoder,
+            Ok((exporter.finish().map_err(export_err)?, busy))
+        });
+
+        let rendered = (|| -> ApiResult<f64> {
+            let mut busy = 0.0;
+            let mut renderer = Renderer::new(gpu, Fonts::bundled());
+            let mut last: Option<(Id, (i64, bool))> = None;
+            for n in 0..total {
+                if cancel.is_cancelled() {
+                    return Err(export_err(ExportError::Cancelled));
+                }
+                let Ok(pic) = vrx.recv() else {
+                    return Ok(busy); // decode failed; its error wins
+                };
+                let t = Instant::now();
+                match pic {
+                    Some((m, f)) => {
+                        if last != Some((m, f.key)) {
+                            renderer.upload(&f.source()).map_err(render_err)?;
+                            last = Some((m, f.key));
+                        }
+                    }
+                    None => {
+                        renderer.clear_clip();
+                        last = None;
+                    }
+                }
+                let layers = job.project.layers_at(fps.tick_of(f0 + n));
+                let titles: Vec<&TitleClip> = layers
+                    .iter()
+                    .filter_map(|l| match l {
+                        Layer::Title(t) => Some(*t),
+                        _ => None,
+                    })
+                    .collect();
+                renderer.compose(size, &titles, title_scale);
+                let out = match gpu_out {
+                    Some(i) => Out::Gpu(renderer.render_nv12(i).map_err(render_err)?),
+                    None => Out::Cpu(renderer.read_nv12().map_err(render_err)?),
+                };
+                busy += t.elapsed().as_secs_f64();
+                if etx.send(out).is_err() {
+                    return Ok(busy); // encoder failed; its error wins
+                }
+                progress((n + 1) as f32 / total as f32);
+            }
+            Ok(busy)
+        })();
+        drop((vrx, etx));
+        let decoded = joined(decode);
+        let stats = joined(encode);
+        let rendered = rendered?;
+        let decoded = decoded?;
+        let (stats, encoded) = stats?;
+        let seconds = started.elapsed().as_secs_f64();
+        eprintln!(
+            "export: {total} frames in {seconds:.1} s, zero-copy {}; busy s: decode {decoded:.1}, \
+             render {rendered:.1} (of which waiting on D3D11 {:.1}), encode {encoded:.1}",
+            gpu_out.is_some(),
+            interop.as_ref().map_or(0.0, |i| i.waited_seconds()),
+        );
+        Ok(Done {
+            frames: stats.frames,
+            seconds,
+            encoder: stats.encoder_name,
+        })
     })
 }
 
@@ -398,6 +520,179 @@ mod tests {
         // b is 29.97 fps on a 30 fps timeline: timeline 10/30 s holds b's frame 9 (PTS 0.3003 s).
         check(100, &b, 9);
         check(150, &a, 15);
+    }
+
+    /// A-PERF-03/04 bench: a 20 s timeline of `test-media/bench20_{1080p,2160p}30.mp4` (one clip,
+    /// a title, its own audio) exported with the YouTube preset. `cargo test --release -p
+    /// editelier -- --ignored export_bench --test-threads=1 --nocapture`.
+    #[test]
+    #[ignore = "perf bench; needs the bench20 clips (see docs/next-session.md)"]
+    fn export_bench() {
+        for (name, ui, (w, h)) in [
+            ("bench20_1080p30.mp4", "youtube-1080", (1920, 1080)),
+            ("bench20_2160p30.mp4", "youtube-4k", (3840, 2160)),
+        ] {
+            let src = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../test-media")
+                .join(name);
+            if !src.is_file() {
+                eprintln!("SKIP: {name} missing");
+                continue;
+            }
+            let Ok(gpu) = Gpu::headless() else {
+                eprintln!("SKIP: no GPU");
+                return;
+            };
+            let tmp = std::env::temp_dir().join("editelier-bench");
+            let _ = std::fs::remove_dir_all(&tmp);
+            std::fs::create_dir_all(&tmp).unwrap();
+            let core = Core::new(
+                Dirs {
+                    cache: tmp.join("cache"),
+                    data: tmp.join("data"),
+                    videos: None,
+                    documents: None,
+                },
+                Some(gpu.clone()),
+            );
+            let Some(tools) = core.tools.clone() else {
+                eprintln!("SKIP: FFmpeg helper missing");
+                return;
+            };
+            let fps = FrameRate::FPS_30;
+            core.replace_doc(
+                Session::new(Project::new(Settings {
+                    fps,
+                    width: w,
+                    height: h,
+                    ..Settings::default()
+                })),
+                None,
+            );
+            core.import(None, &[src.display().to_string()]).unwrap();
+            core.run_command("timeline.append", &json!({"media_id": "1"}))
+                .unwrap();
+            core.run_command(
+                "title.add",
+                &json!({"start": 0, "duration": fps.tick_of(300).0, "text": "Editelier"}),
+            )
+            .unwrap();
+            let project = core.engine.project();
+            let job = Job {
+                media: core.lib.read().unwrap().clone(),
+                project: project.clone(),
+                preset: preset_for(ui, &project).unwrap(),
+                path: tmp.join("bench.mp4"),
+                range: (Tick::ZERO, fps.tick_of(600)),
+                cancel: CancelToken::default(),
+            };
+            let done = run_job(job, tools, &gpu);
+            eprintln!(
+                "BENCH {name}: {} frames in {:.2} s = {:.2}x realtime on {}",
+                done.frames,
+                done.seconds,
+                20.0 / done.seconds,
+                done.encoder
+            );
+            assert_eq!(done.frames, 600);
+        }
+    }
+
+    /// Preview throughput bench (headless): decode + upload + compose + output transform for
+    /// 300 sequential frames into an offscreen 1920x1200 target, zero-copy unless
+    /// `EDITELIER_ZERO_COPY=0`. Same invocation as [`export_bench`].
+    #[test]
+    #[ignore = "perf bench; needs the bench20 clips"]
+    fn preview_bench() {
+        let Ok(gpu) = Gpu::headless() else {
+            eprintln!("SKIP: no GPU");
+            return;
+        };
+        let tmp = std::env::temp_dir().join("editelier-preview-bench");
+        let _ = std::fs::remove_dir_all(&tmp);
+        let core = Core::new(
+            Dirs {
+                cache: tmp.join("cache"),
+                data: tmp.join("data"),
+                videos: None,
+                documents: None,
+            },
+            Some(gpu.clone()),
+        );
+        let Some(tools) = core.tools.clone() else {
+            eprintln!("SKIP: FFmpeg helper missing");
+            return;
+        };
+        let media = Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-media");
+        let clips = [
+            ("1080p original", "bench20_1080p30.mp4", false),
+            ("4K original", "bench20_2160p30.mp4", false),
+            ("4K via proxy", "bench20_2160p30.mp4", true),
+        ];
+        if !clips.iter().all(|c| media.join(c.1).is_file()) {
+            eprintln!("SKIP: bench20 clips missing");
+            return;
+        }
+        core.replace_doc(Session::new(Project::new(Settings::default())), None);
+        let paths: Vec<String> = ["bench20_1080p30.mp4", "bench20_2160p30.mp4"]
+            .iter()
+            .map(|n| media.join(n).display().to_string())
+            .collect();
+        core.import(None, &paths).unwrap();
+        let interop = Interop::new(&gpu).ok();
+        let started = Instant::now();
+        for (label, name, proxy) in clips {
+            let id = if name.contains("1080") { "1" } else { "2" };
+            let e = loop {
+                let e = core.lib.read().unwrap()[&id.parse().unwrap()].clone();
+                let ready = matches!(e.proxy, crate::library::Proxy::Ready { .. });
+                if !proxy || ready || started.elapsed().as_secs() > 300 {
+                    break e;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            };
+            let mut dec = match &interop {
+                Some(i) => Decoders::zero_copy(tools.clone(), i.clone()),
+                None => Decoders::new(tools.clone(), decode_device()),
+            };
+            let mut renderer = Renderer::new(&gpu, Fonts::bundled());
+            let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+            let target = gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: None,
+                size: wgpu::Extent3d {
+                    width: 1920,
+                    height: 1200,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+            let view = target.create_view(&Default::default());
+            let fps = FrameRate::FPS_30;
+            let t0 = Instant::now();
+            let n = 300;
+            for i in 0..n {
+                let f = dec.decode(&e, fps.tick_of(i), proxy).unwrap();
+                renderer.upload(&f.source()).unwrap();
+                renderer.compose((1920, 1080), &[], 1.0);
+                let mut enc = gpu.device.create_command_encoder(&Default::default());
+                renderer.encode_output(&mut enc, &view, format, (1920, 1200));
+                gpu.queue.submit([enc.finish()]);
+                // Like a presented frame: don't let the CPU run more than a frame ahead.
+                gpu.device
+                    .poll(wgpu::PollType::wait_indefinitely())
+                    .unwrap();
+            }
+            let fps = n as f64 / t0.elapsed().as_secs_f64();
+            eprintln!(
+                "PREVIEW {label} (zero-copy {}): {fps:.1} fps",
+                interop.is_some()
+            );
+        }
     }
 
     fn run_job(job: Job, tools: Tools, gpu: &Gpu) -> Done {

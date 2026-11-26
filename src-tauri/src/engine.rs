@@ -10,9 +10,10 @@ use crate::library::{Decoders, Library, OwnedFrame};
 use crate::mix;
 use editelier_core::{Id, Layer, Project, Tick};
 use editelier_media::Tools;
+use editelier_render::Interop;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, RwLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 /// What to show at one timeline frame: the decoded picture of `media`, or nothing (black).
@@ -44,6 +45,8 @@ pub struct Engine {
     wake: Condvar,
     stop: AtomicBool,
     pub stats: Mutex<DecodeStats>,
+    /// Zero-copy decode into the preview's GPU; set once before the decode loop starts.
+    pub interop: OnceLock<Interop>,
 }
 
 const RING: usize = 12;
@@ -68,6 +71,7 @@ impl Engine {
             wake: Condvar::new(),
             stop: AtomicBool::new(false),
             stats: Mutex::new(DecodeStats::default()),
+            interop: OnceLock::new(),
         })
     }
 
@@ -224,7 +228,10 @@ impl Engine {
 
     /// Decode-ahead loop; run on its own thread.
     pub fn decode_loop(self: Arc<Self>, tools: Tools) {
-        let mut dec = Decoders::new(tools, crate::library::decode_device());
+        let mut dec = match self.interop.get() {
+            Some(i) => Decoders::zero_copy(tools, i.clone()),
+            None => Decoders::new(tools, crate::library::decode_device()),
+        };
         while !self.stopped() {
             let Some((p, f)) = self.next_wanted() else {
                 let ring = self.ring.lock().unwrap();

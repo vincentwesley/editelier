@@ -7,7 +7,7 @@ use editelier_media::{
     AudioBuffer, Frame, FrameData, Index, PixelFormat, ProbeInfo, Tools, VideoStream, cache,
     ffmpeg, win,
 };
-use editelier_render::{Pixels, SourceColor, SourceFrame};
+use editelier_render::{GpuImage, Interop, Pixels, SourceColor, SourceFrame};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -231,6 +231,8 @@ pub struct OwnedFrame {
     pub bytes: Vec<u8>,
     pub stride: usize,
     pub color: SourceColor,
+    /// Zero-copy NV12 on the render GPU (then `bytes` is empty).
+    pub gpu: Option<GpuImage>,
 }
 
 impl OwnedFrame {
@@ -239,10 +241,11 @@ impl OwnedFrame {
         SourceFrame {
             width: self.width,
             height: self.height,
-            pixels: match self.format {
-                PixelFormat::Nv12 => Pixels::Nv12 { data, stride },
-                PixelFormat::P010 => Pixels::P010 { data, stride },
-                PixelFormat::Rgba8 => Pixels::Rgba8 { data, stride },
+            pixels: match (&self.gpu, self.format) {
+                (Some(g), _) => Pixels::Gpu(g),
+                (None, PixelFormat::Nv12) => Pixels::Nv12 { data, stride },
+                (None, PixelFormat::P010) => Pixels::P010 { data, stride },
+                (None, PixelFormat::Rgba8) => Pixels::Rgba8 { data, stride },
             },
             color: self.color,
         }
@@ -258,10 +261,12 @@ pub fn pts_at(index: &Index, t: Tick) -> i64 {
 }
 
 /// Decoders for one thread (Media Foundation decoders aren't `Send`). Uses `device` for DXVA
-/// decode and reads frames back to the CPU.
+/// decode and reads frames back to the CPU, or with [`zero_copy`](Self::zero_copy) hands NV12
+/// frames to the renderer's GPU without leaving it.
 pub struct Decoders {
     tools: Tools,
     device: Option<ID3D11Device>,
+    interop: Option<Interop>,
     open: HashMap<PathBuf, win::VideoDecoder>,
     stills: HashMap<PathBuf, Arc<OwnedFrame>>,
 }
@@ -271,8 +276,18 @@ impl Decoders {
         Decoders {
             tools,
             device,
+            interop: None,
             open: HashMap::new(),
             stills: HashMap::new(),
+        }
+    }
+
+    /// Decode on `interop`'s device and keep NV12 frames on the GPU (P010 is still read back).
+    pub fn zero_copy(tools: Tools, interop: Interop) -> Self {
+        Decoders {
+            device: Some(interop.device().clone()),
+            interop: Some(interop),
+            ..Self::new(tools, None)
         }
     }
 
@@ -308,7 +323,7 @@ impl Decoders {
             }
             match win::VideoDecoder::open(path, v, index.clone(), self.device.as_ref()) {
                 Ok(mut d) => {
-                    d.set_cpu_readback(true);
+                    d.set_cpu_readback(self.interop.is_none());
                     self.open.insert(path.clone(), d);
                 }
                 Err(err) => {
@@ -320,7 +335,30 @@ impl Decoders {
             }
         }
         let d = self.open.get_mut(path).expect("inserted above");
-        let f = d.frame_at(pts)?;
+        let mut f = d.frame_at(pts)?;
+        if let FrameData::D3D11(g) = &f.data {
+            if let (Some(i), PixelFormat::Nv12) = (&self.interop, f.format) {
+                let img = i
+                    .import(&g.texture, g.subresource, (f.width, f.height))
+                    .map_err(|e| ApiError::new("media_error", e.to_string()))?;
+                let (width, height) = img.size();
+                return Ok(Arc::new(OwnedFrame {
+                    key: (f.pts, used_proxy),
+                    width,
+                    height,
+                    format: f.format,
+                    bytes: Vec::new(),
+                    stride: 0,
+                    color: if used_proxy {
+                        SourceColor::from_tags(Some("bt709"), Some("tv"), height)
+                    } else {
+                        e.color
+                    },
+                    gpu: Some(img),
+                }));
+            }
+            f = d.to_cpu(&f)?;
+        }
         let color = if used_proxy {
             // Proxies are encoded BT.709 limited by Media Foundation.
             SourceColor::from_tags(Some("bt709"), Some("tv"), f.height)
@@ -343,6 +381,7 @@ fn own(f: Frame, color: SourceColor, proxy: bool) -> ApiResult<OwnedFrame> {
         bytes,
         stride,
         color,
+        gpu: None,
     })
 }
 

@@ -95,9 +95,16 @@ fn file_name_ok(name: &str) -> bool {
 impl Core {
     pub fn new(dirs: Dirs, gpu: Option<Gpu>) -> Arc<Self> {
         let lib = Library::default();
+        let engine = Engine::new(lib.clone());
+        if let Some(i) = gpu
+            .as_ref()
+            .and_then(|g| editelier_render::Interop::new(g).ok())
+        {
+            let _ = engine.interop.set(i);
+        }
         Arc::new(Core {
             doc: Mutex::new(None),
-            engine: Engine::new(lib.clone()),
+            engine,
             lib,
             tools: Tools::locate().map_err(|e| eprintln!("{e}")).ok(),
             dirs,

@@ -179,7 +179,8 @@ fn srgb_eotf(v: vec3<f32>) -> vec3<f32> {
 struct Nv12U {
     width: u32,
     height: u32,
-    _pad0: u32,
+    // Bytes per output row (>= width; 256-aligned for texture copies).
+    pitch: u32,
     _pad1: u32,
 };
 
@@ -213,7 +214,7 @@ fn byte(v: f32) -> u32 {
             let y = byte(16.0 + 219.0 * luma(code_at(x0 + i, y0 + row)));
             word = word | (y << (8u * i));
         }
-        nv_out[((y0 + row) * w + x0) / 4u] = word;
+        nv_out[((y0 + row) * nv_u.pitch + x0) / 4u] = word;
     }
     var uv_word = 0u;
     for (var pair = 0u; pair < 2u; pair++) {
@@ -224,5 +225,5 @@ fn byte(v: f32) -> u32 {
         let cr = byte(128.0 + (c.r - yl) / 1.5748 * 224.0);
         uv_word = uv_word | (cb << (16u * pair)) | (cr << (16u * pair + 8u));
     }
-    nv_out[(w * h + id.y * w + x0) / 4u] = uv_word;
+    nv_out[(nv_u.pitch * (h + id.y) + x0) / 4u] = uv_word;
 }
