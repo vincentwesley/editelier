@@ -1,8 +1,10 @@
 import "./style.css";
 import "./house/credits/credits.js";
 import "./house/brand/logo/logo-resize";
-import "./preview";
+import { initDialogs } from "./dialogs";
+import { initEditor } from "./editor";
 import { applyTheme, nextTheme, type Theme } from "./theme";
+import { initWelcome } from "./welcome";
 
 const KEY = "theme";
 const store = {
@@ -22,15 +24,22 @@ const store = {
   },
 };
 
-const btn = document.querySelector<HTMLButtonElement>("#theme")!;
+const toggles = document.querySelectorAll<HTMLButtonElement>("[data-theme-toggle]");
 function sync(t: Theme): void {
   applyTheme(t);
-  btn.setAttribute("aria-pressed", String(t === "light"));
-  btn.textContent = t === "light" ? "Dark theme" : "Light theme";
+  for (const btn of toggles) {
+    btn.setAttribute("aria-pressed", String(t === "light"));
+    btn.textContent = t === "light" ? "Dark theme" : "Light theme";
+  }
 }
 sync(store.get());
-btn.addEventListener("click", () => {
-  const t = nextTheme(store.get());
-  store.set(t);
-  sync(t);
-});
+for (const btn of toggles)
+  btn.addEventListener("click", () => {
+    const t = nextTheme(store.get());
+    store.set(t);
+    sync(t);
+  });
+
+initDialogs();
+initEditor();
+initWelcome();
