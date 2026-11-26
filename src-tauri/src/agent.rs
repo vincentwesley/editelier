@@ -25,8 +25,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Listener, Manager};
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_PIPE_CONNECTED, HANDLE, HLOCAL, HWND, INVALID_HANDLE_VALUE, LocalFree,
-    RECT,
+    CloseHandle, ERROR_PIPE_CONNECTED, HANDLE, HLOCAL, HWND, INVALID_HANDLE_VALUE, LocalFree, RECT,
 };
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleBitmap, CreateCompatibleDC,
@@ -71,7 +70,12 @@ const MAX_LINE: u64 = 1 << 20;
 const INFO_FILE: &str = "editelier-agent.json";
 
 #[derive(Deserialize, Debug)]
-#[serde(tag = "method", content = "params", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(
+    tag = "method",
+    content = "params",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 pub enum Call {
     RunCommand {
         name: String,
@@ -134,7 +138,10 @@ pub fn handle_line(
     exec: impl FnOnce(Call) -> ApiResult<Value>,
 ) -> (Value, bool) {
     let Ok(req) = serde_json::from_str::<Request>(line) else {
-        return (rpc_err(&Value::Null, -32600, "Invalid request", None), false);
+        return (
+            rpc_err(&Value::Null, -32600, "Invalid request", None),
+            false,
+        );
     };
     if !token_ok(&req.token, token) {
         return (rpc_err(&req.id, -32001, "Unauthorized", None), true);
@@ -311,7 +318,11 @@ fn serve(app: &AppHandle, jobs: &Jobs) -> std::io::Result<()> {
         )?
     };
     let mut f = unsafe { File::from_raw_handle(h.0) };
-    f.write_all(json!({"pipe": name, "token": token, "pid": std::process::id()}).to_string().as_bytes())?;
+    f.write_all(
+        json!({"pipe": name, "token": token, "pid": std::process::id()})
+            .to_string()
+            .as_bytes(),
+    )?;
     drop(f);
     eprintln!("agent: listening ({})", info.display());
 
@@ -411,7 +422,9 @@ fn exec(app: &AppHandle, jobs: &Jobs, call: Call) -> ApiResult<Value> {
             let w = app
                 .get_webview_window("main")
                 .ok_or_else(|| invalid("no window"))?;
-            let hwnd = w.hwnd().map_err(|e| ApiError::new("internal", e.to_string()))?;
+            let hwnd = w
+                .hwnd()
+                .map_err(|e| ApiError::new("internal", e.to_string()))?;
             let (width, height) = screenshot(hwnd, &path)?;
             json!({"path": path.display().to_string(), "width": width, "height": height})
         }

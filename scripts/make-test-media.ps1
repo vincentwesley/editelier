@@ -65,6 +65,12 @@ Make 'av_offset_h264_aac.mp4' (@('-f', 'lavfi', '-i', "testsrc2=size=640x360:rat
 # Loud, peaky "music": quiet bed + full-scale transients at 44.1 kHz (needs gain AND a true-peak limiter at -14 LUFS)
 Make 'loud_peaky_44k.wav' @('-f', 'lavfi', '-i', "aevalsrc='0.08*sin(2*PI*220*t)+0.95*exp(-200*mod(t\,0.5))*sin(2*PI*3000*t)':s=44100:d=10:c=stereo", '-c:a', 'pcm_s16le')
 
+# Export/preview benches (ignored tests export_bench, preview_bench): 20 s, GOP 60 + AAC
+foreach ($b in @(@('1080p', '1920x1080'), @('2160p', '3840x2160'))) {
+  Make "bench20_$($b[0])30.mp4" (@('-f', 'lavfi', '-i', "testsrc2=size=$($b[1]):rate=30:duration=20,$sdr") + $tone +
+    @('-t', '20') + $x264 + @('-g', '60') + $aac + @('-movflags', '+faststart'))
+}
+
 # EXIF orientation 1..8: same stored pixels, only the tag differs (APP1 Exif spliced in after SOI).
 function Exif-Tiff([int]$o) {
   # Big-endian TIFF, one IFD entry: 0x0112 Orientation, SHORT, count 1

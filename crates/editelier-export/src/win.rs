@@ -164,6 +164,20 @@ pub fn create_device_manager(luid: Option<u64>) -> Result<IMFDXGIDeviceManager> 
     }
 }
 
+/// A DXGI device manager for an existing D3D11 device (video support, multithread-protected),
+/// e.g. the one decode and render share for zero-copy export.
+pub fn device_manager_for(device: &ID3D11Device) -> Result<IMFDXGIDeviceManager> {
+    startup()?;
+    unsafe {
+        let mut token = 0u32;
+        let mut manager = None;
+        MFCreateDXGIDeviceManager(&mut token, &mut manager)?;
+        let manager = manager.ok_or_else(|| ExportError::Media("no device manager".into()))?;
+        manager.ResetDevice(device, token)?;
+        Ok(manager)
+    }
+}
+
 /// The D3D11 device behind a manager (create input textures on this device).
 pub fn manager_device(manager: &IMFDXGIDeviceManager) -> Result<ID3D11Device> {
     unsafe {
@@ -210,6 +224,7 @@ pub struct Exporter {
     frames: u64,
     audio_frames: u64,
     manager: Option<IMFDXGIDeviceManager>,
+    allocator: Option<IMFVideoSampleAllocatorEx>,
     encoder_name: String,
     encoder_vendor: Vendor,
     total_frames: Option<u64>,
@@ -355,6 +370,7 @@ impl Exporter {
             frames: 0,
             audio_frames: 0,
             manager,
+            allocator: None,
             encoder_name: String::new(),
             encoder_vendor: encoder.vendor,
             total_frames: opts.total_frames,
@@ -440,12 +456,16 @@ impl Exporter {
     }
 
     fn write_video(&mut self, buffer: IMFMediaBuffer) -> Result<()> {
+        let s = unsafe { MFCreateSample()? };
+        unsafe { s.AddBuffer(&buffer)? };
+        self.write_sample(s)
+    }
+
+    fn write_sample(&mut self, s: IMFSample) -> Result<()> {
         let writer = self.writer()?;
         let t0 = self.preset.frame_time_hns(self.frames);
         let t1 = self.preset.frame_time_hns(self.frames + 1);
         unsafe {
-            let s = MFCreateSample()?;
-            s.AddBuffer(&buffer)?;
             s.SetSampleTime(t0)?;
             s.SetSampleDuration(t1 - t0)?;
             writer.WriteSample(self.video, &s)?;
@@ -513,6 +533,62 @@ impl Exporter {
             b
         };
         self.write_video(buffer)
+    }
+
+    /// Zero-copy with reuse: `copy` fills a pooled NV12 texture (on the device manager's
+    /// device, e.g. a GPU-side `CopySubresourceRegion` of the caller's frame), which is then
+    /// written. MF returns the texture to the pool once encoded, so the caller's own texture is
+    /// free as soon as its copy has run on the GPU.
+    pub fn push_video_copy(
+        &mut self,
+        copy: impl FnOnce(&ID3D11Texture2D, u32) -> Result<()>,
+    ) -> Result<()> {
+        self.writer()?;
+        let alloc = match &self.allocator {
+            Some(a) => a.clone(),
+            None => {
+                let m = self.manager.as_ref().ok_or_else(|| {
+                    ExportError::InvalidInput("texture input needs a device manager".into())
+                })?;
+                let a = unsafe {
+                    let mut p = std::ptr::null_mut();
+                    MFCreateVideoSampleAllocatorEx(&IMFVideoSampleAllocatorEx::IID, &mut p)?;
+                    IMFVideoSampleAllocatorEx::from_raw(p)
+                };
+                let t = media_type()?;
+                set_video_common(&t, &self.preset)?;
+                unsafe {
+                    t.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_NV12)?;
+                    a.SetDirectXManager(m)?;
+                    let mut attrs = None;
+                    MFCreateAttributes(&mut attrs, 1)?;
+                    a.InitializeSampleAllocatorEx(2, 16, attrs.as_ref(), &t)?;
+                }
+                self.allocator = Some(a.clone());
+                a
+            }
+        };
+        let sample = loop {
+            match unsafe { alloc.AllocateSample() } {
+                Ok(s) => break s,
+                // All pooled samples are still queued in the encoder: wait for one.
+                Err(e) if e.code() == MF_E_SAMPLEALLOCATOR_EMPTY => {
+                    self.writer()?;
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                Err(e) => return Err(e.into()),
+            }
+        };
+        let (texture, sub) = unsafe {
+            let b = sample.GetBufferByIndex(0)?;
+            b.SetCurrentLength(b.cast::<IMF2DBuffer>()?.GetContiguousLength()?)?;
+            let dxgi: IMFDXGIBuffer = b.cast()?;
+            let mut p = std::ptr::null_mut();
+            dxgi.GetResource(&ID3D11Texture2D::IID, &mut p)?;
+            (ID3D11Texture2D::from_raw(p), dxgi.GetSubresourceIndex()?)
+        };
+        copy(&texture, sub)?;
+        self.write_sample(sample)
     }
 
     /// f32 interleaved stereo at 48 kHz. Samples are clamped to [-1, 1].

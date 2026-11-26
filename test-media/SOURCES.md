@@ -19,6 +19,7 @@ Everything here except this file is gitignored and **self-generated**: run `scri
 | `loud_peaky_44k.wav` | quiet 220 Hz bed + near-full-scale transients at 44.1 kHz: reaching −14 LUFS needs the true-peak limiter |
 | `orient_base.jpg`, `orient_1.jpg` … `orient_8.jpg` | the corner marker as a JPEG; `orient_N` adds an Exif APP1 with Orientation = N (same stored pixels) |
 | `orient_base.png`, `orient_6.png` | the marker as PNG; `orient_6` adds an `eXIf` chunk with Orientation = 6 |
+| `bench20_1080p30.mp4`, `bench20_2160p30.mp4` | 20 s 1080p30 / 4K30 H.264 (GOP 60) + AAC for the ignored `export_bench` / `preview_bench` |
 
 Sources: FFmpeg `testsrc2`, `sine` and `drawtext` (Windows Consolas font, only to render digits into local files). Tests in `crates/editelier-media/tests/media.rs` skip with a message when a file is missing. Oracle frames come from the system ffmpeg (`EDITELIER_ORACLE_FFMPEG` overrides the path).
 
