@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["src-tauri", "crates/editelier-core", "crates/vendor/craft-time", "crates/editelier-media", "crates/editelier-export"]
+members = ["src-tauri", "crates/editelier-core", "crates/vendor/craft-time", "crates/editelier-media", "crates/editelier-export", "crates/editelier-render"]
 
 [workspace.package]
 edition = "2024"
