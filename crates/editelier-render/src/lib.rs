@@ -33,9 +33,12 @@ impl std::error::Error for RenderError {}
 
 pub type Result<T> = std::result::Result<T, RenderError>;
 
-/// A wgpu device + queue. Clones share the device.
+/// A wgpu instance, adapter, device and queue. Clones share the device; the preview makes its
+/// surface from `instance` so it can present with the same device.
 #[derive(Clone)]
 pub struct Gpu {
+    pub instance: wgpu::Instance,
+    pub adapter: wgpu::Adapter,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
 }
@@ -46,7 +49,7 @@ impl Gpu {
         adapter.features() & wgpu::Features::TEXTURE_FORMAT_16BIT_NORM
     }
 
-    /// DX12 device without a surface (export, tests, thumbnails).
+    /// DX12 device on the high-performance adapter (any DX12 adapter can present to an HWND).
     pub fn headless() -> Result<Gpu> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::DX12,
@@ -57,17 +60,18 @@ impl Gpu {
             ..Default::default()
         }))
         .map_err(|e| RenderError(format!("no GPU adapter: {e}")))?;
-        Self::from_adapter(&adapter, "render")
-    }
-
-    pub fn from_adapter(adapter: &wgpu::Adapter, label: &str) -> Result<Gpu> {
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some(label),
-            required_features: Self::wanted_features(adapter),
+            label: Some("render"),
+            required_features: Self::wanted_features(&adapter),
             ..Default::default()
         }))
         .map_err(|e| RenderError(format!("no GPU device: {e}")))?;
-        Ok(Gpu { device, queue })
+        Ok(Gpu {
+            instance,
+            adapter,
+            device,
+            queue,
+        })
     }
 }
 
