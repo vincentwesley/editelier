@@ -417,3 +417,87 @@ fn proxy_4k60() {
     assert!(matches!(r, Err(Error::Cancelled)));
     assert!(std::fs::read_dir(&dir2).unwrap().next().is_none());
 }
+
+#[test]
+fn phone_rotation_probe() {
+    let (Some(t), Some(p)) = (tools(), media("phone_rot90cw_h264.mp4")) else {
+        return;
+    };
+    let v = probe(&t, &p).unwrap().video.remove(0);
+    // Coded landscape, display matrix "rotate 90 degrees clockwise" (ffprobe rotation -90).
+    assert_eq!((v.width, v.height, v.rotation), (640, 360, 270));
+    assert_eq!((v.orientation(), v.display_size()), (6, (360, 640)));
+}
+
+/// Corner marker of an RGBA frame: R(ed), G(reen), B(lue) or X (background), sampled in the
+/// middle of each corner block, in order top-left, top-right, bottom-left, bottom-right.
+fn corners(f: &Frame) -> String {
+    let rgba = f.to_rgba().unwrap();
+    let (w, h) = (f.width as usize, f.height as usize);
+    [
+        (w / 8, h / 8),
+        (w * 7 / 8, h / 8),
+        (w / 8, h * 7 / 8),
+        (w * 7 / 8, h * 7 / 8),
+    ]
+    .iter()
+    .map(|&(x, y)| {
+        let p = &rgba[(y * w + x) * 4..];
+        match (p[0] > 150, p[1] > 150, p[2] > 150) {
+            (true, false, false) => 'R',
+            (false, true, false) => 'G',
+            (false, false, true) => 'B',
+            _ => 'X',
+        }
+    })
+    .collect()
+}
+
+/// Upright corners per EXIF code for the stored marker "RGBX" (EXIF / TIFF 6.0 definitions).
+const UPRIGHT: [&str; 8] = [
+    "RGBX", "GRXB", "XBGR", "BXRG", "RBGX", "BRXG", "XGBR", "GXRB",
+];
+
+fn check_still(name: &str, code: u16) {
+    let Some(p) = media(name) else { return };
+    let info = win::wic::probe_image(&p).unwrap();
+    let img = info.image.unwrap();
+    let f = win::wic::decode_image(&p).unwrap();
+    let want = if code >= 5 { (240, 320) } else { (320, 240) };
+    assert_eq!(img.orientation, code, "{name}");
+    assert_eq!((img.width, img.height), want, "{name}: probe size");
+    assert_eq!((f.width, f.height), want, "{name}: decoded size");
+    assert_eq!(corners(&f), UPRIGHT[code as usize - 1], "{name}");
+}
+
+#[test]
+fn exif_orientation_jpeg_all_eight() {
+    for code in 1..=8 {
+        check_still(&format!("orient_{code}.jpg"), code);
+    }
+}
+
+#[test]
+fn exif_orientation_png() {
+    check_still("orient_6.png", 6);
+}
+
+#[test]
+fn audio_start_offset_and_priming() {
+    let (Some(t), Some(p)) = (tools(), media("av_offset_h264_aac.mp4")) else {
+        return;
+    };
+    let info = probe(&t, &p).unwrap();
+    let ix = ffmpeg::index(&t, &p, &info.video[0], &cache_dir("avsync")).unwrap();
+    assert_eq!(ix.pts[0], 0, "first video frame at t = 0");
+    let buf = win::decode_audio(&t, &p, &info.audio[0]).unwrap();
+    let ch = buf.channels as usize;
+    // The burst starts at 1.000 s (sine from phase 0, 0.25 is reached ~4 samples in).
+    let onset = buf
+        .samples
+        .chunks(ch)
+        .position(|f| f[0].abs() > 0.25)
+        .unwrap();
+    eprintln!("A/V offset clip: burst at sample {onset} (want ~48004)");
+    assert!((onset as i64 - 48_004).abs() <= 48, "onset {onset}");
+}

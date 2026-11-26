@@ -4,7 +4,7 @@
 pub mod mf;
 pub mod wic;
 
-pub use mf::{VideoDecoder, decode_audio, make_proxy, proxy_path};
+pub use mf::{VideoDecoder, decode_audio, make_proxy, proxy_path, stream_audio};
 
 use crate::Error;
 use std::sync::Once;

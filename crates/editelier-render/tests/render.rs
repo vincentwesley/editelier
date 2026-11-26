@@ -41,6 +41,7 @@ fn neutral_grade_round_trips_nv12_709_limited() {
             matrix: Matrix::Bt709,
             full_range: false,
         },
+        orient: Orient::default(),
     })
     .unwrap();
     r.compose((w as u32, h as u32), &[], 1.0);
@@ -75,6 +76,7 @@ fn neutral_grade_round_trips_rgba_still() {
             matrix: Matrix::Bt709,
             full_range: true,
         },
+        orient: Orient::default(),
     })
     .unwrap();
     r.compose((w as u32, h as u32), &[], 1.0);
@@ -205,6 +207,7 @@ fn letterbox_keeps_bars_black() {
             matrix: Matrix::Bt709,
             full_range: true,
         },
+        orient: Orient::default(),
     })
     .unwrap();
     r.compose((90, 160), &[], 1.0);
@@ -212,4 +215,54 @@ fn letterbox_keeps_bars_black() {
     let px = |x: usize, y: usize| &out[(y * 90 + x) * 4..(y * 90 + x) * 4 + 3];
     assert_eq!(px(45, 5), [0, 0, 0]);
     assert_eq!(px(45, 80), [200, 200, 200]);
+}
+
+#[test]
+fn orientation_turns_the_clip_upright() {
+    let Some(gpu) = gpu() else { return };
+    // 4x2 stored picture: red top-left, green top-right, blue bottom-left, white bottom-right.
+    let (red, green, blue, white) = ([255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 255]);
+    let px = |c: [u8; 3]| [c[0], c[1], c[2], 255];
+    let img: Vec<u8> = [red, red, green, green, blue, blue, white, white]
+        .into_iter()
+        .flat_map(px)
+        .collect();
+    // Expected upright corners (TL, TR, BL, BR) per EXIF code, from the EXIF definitions.
+    let cases = [
+        (1, [red, green, blue, white]),
+        (2, [green, red, white, blue]),
+        (3, [white, blue, green, red]),
+        (4, [blue, white, red, green]),
+        (5, [red, blue, green, white]),
+        (6, [blue, red, white, green]),
+        (7, [white, green, blue, red]),
+        (8, [green, white, red, blue]),
+    ];
+    let mut r = Renderer::new(&gpu, Fonts::bundled());
+    for (code, want) in cases {
+        let o = Orient(code);
+        r.upload(&SourceFrame {
+            width: 4,
+            height: 2,
+            pixels: Pixels::Rgba8 {
+                data: &img,
+                stride: 16,
+            },
+            color: SourceColor {
+                matrix: Matrix::Bt709,
+                full_range: true,
+            },
+            orient: o,
+        })
+        .unwrap();
+        let (w, h) = o.size((40, 20));
+        r.compose((w, h), &[], 1.0);
+        let out = r.read_rgba8().unwrap();
+        let at = |x: u32, y: u32| {
+            let i = ((y * w + x) * 4) as usize;
+            [out[i], out[i + 1], out[i + 2]]
+        };
+        let got = [at(1, 1), at(w - 2, 1), at(1, h - 2), at(w - 2, h - 2)];
+        assert_eq!(got, want, "EXIF {code}");
+    }
 }

@@ -463,7 +463,8 @@ impl VideoDecoder {
     }
 }
 
-fn mf_audio(path: &Path) -> Result<AudioBuffer> {
+/// MF source reader for the first audio stream as float PCM: (reader, rate, channels).
+fn mf_audio(path: &Path) -> Result<(IMFSourceReader, u32, u32)> {
     let (reader, _) = open_reader(path, None, AUDIO)?;
     let t = media_type(&MFMediaType_Audio, &MFAudioFormat_Float)?;
     unsafe {
@@ -482,31 +483,79 @@ fn mf_audio(path: &Path) -> Result<AudioBuffer> {
         let channels = cur
             .GetUINT32(&MF_MT_AUDIO_NUM_CHANNELS)
             .map_err(err("channels"))?;
-        let mut samples = Vec::new();
-        while let Some((_, s)) = read(&reader, AUDIO)? {
+        Ok((reader, rate, channels))
+    }
+}
+
+/// Streams the audio as f32 48 kHz interleaved chunks to `sink(channels, samples)`, bounded
+/// memory. Media Foundation first; FFmpeg only for royalty-free codecs MF can't open (never AAC).
+/// Sample 0 is presentation time 0 of the file: a late first sample is padded with silence and
+/// anything timed before 0 (encoder priming) is dropped.
+pub fn stream_audio(
+    tools: &Tools,
+    path: &Path,
+    a: &AudioStream,
+    sink: &mut dyn FnMut(u32, &[f32]) -> Result<()>,
+) -> Result<()> {
+    let (reader, rate, ch) = match mf_audio(path) {
+        Ok(r) => r,
+        Err(e) => return crate::ffmpeg::stream_audio(tools, path, a, sink).map_err(|_| e),
+    };
+    let mut r = crate::To48k::new(rate, ch)?;
+    // Output frames still to drop (negative start) before passing samples on.
+    let drop = std::cell::Cell::new(0usize);
+    let mut out = |s: &[f32]| {
+        let n = (drop.get() * ch as usize).min(s.len());
+        drop.set(drop.get() - n / ch as usize);
+        if n < s.len() {
+            sink(ch, &s[n..])
+        } else {
+            Ok(())
+        }
+    };
+    let mut first = true;
+    while let Some((ts, s)) = read(&reader, AUDIO)? {
+        if std::mem::take(&mut first) {
+            // MF ignores MP4 edit lists and keeps encoder priming: its first sample is the first
+            // packet, whose presentation time ffprobe reports as the stream start (start delay
+            // and priming included). Fall back to MF's own timestamp without a probe value.
+            let at48 = Rational::new(1, crate::SAMPLE_RATE as i64);
+            let lead = match a.start_us {
+                Some(us) => crate::MICROS.rescale(us, at48),
+                None => HNS.rescale(ts, at48),
+            };
+            if lead > 0 {
+                out(&vec![0.0; lead as usize * ch as usize])?;
+            } else {
+                drop.set(lead.unsigned_abs() as usize);
+            }
+        }
+        unsafe {
             let b = s.ConvertToContiguousBuffer().map_err(err("audio buffer"))?;
             let (mut p, mut len) = (std::ptr::null_mut(), 0u32);
             b.Lock(&mut p, None, Some(&mut len))
                 .map_err(err("audio lock"))?;
-            let f = std::slice::from_raw_parts(p as *const f32, len as usize / 4);
-            samples.extend_from_slice(f);
+            let f = std::slice::from_raw_parts(p as *const f32, len as usize / 4).to_vec();
             let _ = b.Unlock();
+            r.push(&f, &mut out)?;
         }
-        Ok(AudioBuffer {
-            sample_rate: rate,
-            channels,
-            samples,
-        })
     }
+    r.finish(&mut out)
 }
 
-/// Decodes `a` to f32 48 kHz interleaved: Media Foundation first; FFmpeg only for royalty-free
-/// codecs MF can't handle (never AAC).
+/// Decodes the whole stream into memory (tests, short clips); see [`stream_audio`].
 pub fn decode_audio(tools: &Tools, path: &Path, a: &AudioStream) -> Result<AudioBuffer> {
-    match mf_audio(path) {
-        Ok(buf) => crate::resample_to_48k(buf),
-        Err(e) => crate::ffmpeg::decode_audio(tools, path, a).map_err(|_| e),
-    }
+    let mut buf = AudioBuffer {
+        sample_rate: crate::SAMPLE_RATE,
+        channels: a.channels.max(1),
+        samples: Vec::new(),
+    };
+    stream_audio(tools, path, a, &mut |ch, s| {
+        buf.channels = ch;
+        buf.samples.extend_from_slice(s);
+        Ok(())
+    })?;
+    Ok(buf)
 }
 
 /// Where the proxy for `path` lives (whether or not it exists yet).

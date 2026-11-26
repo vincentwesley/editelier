@@ -252,7 +252,7 @@ pub fn snapshot(
             let v = e.and_then(|e| e.probe.video.first());
             let img = e.and_then(|e| e.probe.image.as_ref());
             let (width, height) = v
-                .map(|v| (v.width, v.height))
+                .map(|v| v.display_size())
                 .or(img.map(|i| (i.width, i.height)))
                 .unwrap_or((0, 0));
             let codec = v

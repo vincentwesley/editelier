@@ -10,9 +10,11 @@
 //! not a shared NT handle. Zero-copy (D3D11 shared texture → D3D12 resource → `create_texture_from_hal`
 //! + fence) when 4K originals in preview or export throughput need it.
 
+mod orient;
 mod quality;
 mod text;
 
+pub use orient::Orient;
 pub use quality::ssim;
 pub use text::Fonts;
 
@@ -132,6 +134,8 @@ pub struct SourceFrame<'a> {
     pub height: u32,
     pub pixels: Pixels<'a>,
     pub color: SourceColor,
+    /// How to turn the stored picture upright (EXIF code; rotation metadata for video).
+    pub orient: Orient,
 }
 
 /// How a clip sits in a canvas of another aspect.
@@ -239,6 +243,7 @@ pub struct Renderer {
     linear: wgpu::Sampler,
     dummy: wgpu::Texture,
     clip: Option<Clip>,
+    orient: Orient,
     show_clip: bool,
     canvas: Option<wgpu::Texture>,
     titles: TitleCache,
@@ -327,6 +332,7 @@ impl Renderer {
             linear,
             dummy,
             clip: None,
+            orient: Orient::default(),
             show_clip: false,
             canvas: None,
             titles: TitleCache::new(fonts),
@@ -484,6 +490,7 @@ impl Renderer {
             pass.draw(0..3, 0..1);
         }
         self.gpu.queue.submit([enc.finish()]);
+        self.orient = f.orient;
         self.show_clip = true;
         Ok(())
     }
@@ -513,8 +520,8 @@ impl Renderer {
         if self.show_clip
             && let Some(c) = &self.clip
         {
-            let rect = fit_rect(c.size, size, self.fit);
-            quads.push((Self::view(&c.out), quad_uniform(rect, [0.0; 4], 0)));
+            let rect = fit_rect(self.orient.size(c.size), size, self.fit);
+            quads.push((Self::view(&c.out), orient::clip_quad(rect, self.orient)));
         }
         for t in titles {
             if let Some((tex, rect)) =

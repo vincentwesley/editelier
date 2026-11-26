@@ -2,12 +2,13 @@
 //! audio, plus the per-thread decoder pool that turns (media, source time) into a frame.
 
 use crate::api::{ApiError, ApiResult};
+use crate::mix;
 use editelier_core::{FrameRate, Id, MediaKind, MediaMeta, TICKS_PER_SECOND, Tick};
 use editelier_media::{
-    AudioBuffer, Frame, FrameData, Index, PixelFormat, ProbeInfo, Tools, VideoStream, cache,
-    ffmpeg, win,
+    AudioBuffer, Frame, FrameData, Index, PixelFormat, ProbeInfo, Rational, Tools, VideoStream,
+    cache, ffmpeg, win,
 };
-use editelier_render::{Pixels, SourceColor, SourceFrame};
+use editelier_render::{Orient, Pixels, SourceColor, SourceFrame};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -44,8 +45,8 @@ pub struct MediaEntry {
     pub color: SourceColor,
     pub thumb: Option<PathBuf>,
     pub proxy: Proxy,
-    /// Decoded audio, 48 kHz stereo interleaved (filled in the background).
-    pub audio: Option<Arc<Vec<f32>>>,
+    /// Decoded audio on disk (filled in the background).
+    pub audio: Option<Arc<AudioPcm>>,
 }
 
 pub type Library = Arc<RwLock<HashMap<Id, Arc<MediaEntry>>>>;
@@ -176,8 +177,34 @@ fn thumbnail(tools: &Tools, cache_dir: &Path, e: &MediaEntry) -> ApiResult<PathB
     };
     let t = cache::thumbnail_of(&frame, 160)
         .ok_or_else(|| ApiError::new("media_error", "no thumbnail"))?;
-    cache::write_atomic(&out, &bmp(t.width, t.height, &t.rgba))?;
+    let (w, h, rgba) = orient_rgba(t.width, t.height, &t.rgba, f.orient);
+    cache::write_atomic(&out, &bmp(w, h, &rgba))?;
     Ok(out)
+}
+
+/// `rgba` (`w` x `h`, stored orientation) turned upright: display size and pixels. Same mapping
+/// as the compositor's (render crate `orient_uv`), in pixels.
+fn orient_rgba(w: u32, h: u32, rgba: &[u8], o: Orient) -> (u32, u32, Vec<u8>) {
+    let (dw, dh) = o.size((w, h));
+    let (w1, h1) = (dw - 1, dh - 1);
+    let mut out = Vec::with_capacity(rgba.len());
+    for y in 0..dh {
+        for x in 0..dw {
+            let (sx, sy) = match o.0 {
+                2 => (w1 - x, y),
+                3 => (w1 - x, h1 - y),
+                4 => (x, h1 - y),
+                5 => (y, x),
+                6 => (y, w1 - x),
+                7 => (h1 - y, w1 - x),
+                8 => (h1 - y, x),
+                _ => (x, y),
+            };
+            let i = (sy * w + sx) as usize * 4;
+            out.extend_from_slice(&rgba[i..i + 4]);
+        }
+    }
+    (dw, dh, out)
 }
 
 /// 32-bit top-down BMP (the webview shows it; no image encoder dependency).
@@ -201,24 +228,120 @@ fn bmp(w: u32, h: u32, rgba: &[u8]) -> Vec<u8> {
     b
 }
 
-/// Decoded audio as 48 kHz stereo, plus cached waveform peaks.
-pub fn load_audio(tools: &Tools, cache_dir: &Path, e: &MediaEntry) -> ApiResult<Arc<Vec<f32>>> {
+/// Decoded audio in the disk cache: 48 kHz stereo f32 LE, frame 0 at the clip's source time 0
+/// (the first video frame, or the file's start for audio-only media). Read in ranges, so memory
+/// stays bounded however long the clip is.
+pub struct AudioPcm {
+    file: std::fs::File,
+    pub frames: i64,
+}
+
+impl AudioPcm {
+    pub fn open(path: &Path) -> std::io::Result<Self> {
+        let file = std::fs::File::open(path)?;
+        let frames = (file.metadata()?.len() / 8) as i64;
+        Ok(Self { file, frames })
+    }
+
+    /// Stereo frames starting at frame `from` into `out` (interleaved); outside the audio, and on
+    /// a read error, the samples are silence.
+    pub fn read(&self, from: i64, out: &mut [f32]) {
+        use std::os::windows::fs::FileExt;
+        out.fill(0.0);
+        let n = (out.len() / 2) as i64;
+        let (lo, hi) = (from.max(0), (from + n).min(self.frames));
+        if hi <= lo {
+            return;
+        }
+        let dst = &mut out[((lo - from) * 2) as usize..((hi - from) * 2) as usize];
+        let mut bytes = vec![0u8; dst.len() * 4];
+        let mut got = 0;
+        while got < bytes.len() {
+            match self
+                .file
+                .seek_read(&mut bytes[got..], (lo * 8) as u64 + got as u64)
+            {
+                Ok(0) | Err(_) => break,
+                Ok(k) => got += k,
+            }
+        }
+        for (d, b) in dst.iter_mut().zip(bytes[..got].as_chunks::<4>().0) {
+            *d = f32::from_le_bytes(*b);
+        }
+    }
+}
+
+fn io(e: std::io::Error) -> ApiError {
+    editelier_media::Error::Io(e).into()
+}
+
+/// Streams the audio to the disk cache (48 kHz stereo, aligned to source time 0) and writes the
+/// waveform peaks on the way; reuses the cache when present.
+pub fn load_audio(tools: &Tools, cache_dir: &Path, e: &MediaEntry) -> ApiResult<Arc<AudioPcm>> {
     let a = e
         .probe
         .audio
         .first()
         .ok_or_else(|| ApiError::new("no_audio", "no audio stream"))?;
-    let buf = win::decode_audio(tools, &e.path, a)?;
-    let _ = cache::waveform(&e.path, cache_dir, || Ok(buf.clone()));
-    Ok(Arc::new(to_stereo(&buf)))
-}
-
-fn to_stereo(b: &AudioBuffer) -> Vec<f32> {
-    let ch = b.channels.max(1) as usize;
-    b.samples
-        .chunks(ch)
-        .flat_map(|f| [f[0], *f.get(1).unwrap_or(&f[0])])
-        .collect()
+    let file = cache_dir.join(format!("{}.a{}.pcm", cache::cache_key(&e.path)?, a.index));
+    if !file.is_file() {
+        std::fs::create_dir_all(cache_dir).map_err(io)?;
+        // Decoded sample 0 is file time 0; source time 0 is the first video frame (D4).
+        let start = e.index.as_ref().map_or(0, |ix| {
+            ix.time_base.rescale(ix.pts[0], Rational::new(1, mix::RATE))
+        });
+        let part = file.with_extension("part");
+        let mut w = std::io::BufWriter::new(std::fs::File::create(&part).map_err(io)?);
+        let mut skip = start.max(0);
+        let mut window = (0usize, 0f32, 0f32);
+        let mut peaks = Vec::new();
+        let mut frame = |w: &mut dyn std::io::Write, l: f32, r: f32| -> std::io::Result<()> {
+            w.write_all(&l.to_le_bytes())?;
+            w.write_all(&r.to_le_bytes())?;
+            window = (window.0 + 1, window.1.min(l).min(r), window.2.max(l).max(r));
+            if window.0 == 480 {
+                peaks.extend([window.1, window.2]);
+                window = (0, 0.0, 0.0);
+            }
+            Ok(())
+        };
+        let res = (|| -> ApiResult<()> {
+            for _ in 0..(-start).max(0) {
+                frame(&mut w, 0.0, 0.0).map_err(io)?;
+            }
+            win::stream_audio(tools, &e.path, a, &mut |ch, s| {
+                for f in s.chunks_exact(ch.max(1) as usize) {
+                    if skip > 0 {
+                        skip -= 1;
+                        continue;
+                    }
+                    frame(&mut w, f[0], *f.get(1).unwrap_or(&f[0]))?;
+                }
+                Ok(())
+            })?;
+            use std::io::Write;
+            w.flush().map_err(io)?;
+            Ok(())
+        })();
+        drop(w);
+        if let Err(err) = res {
+            let _ = std::fs::remove_file(&part);
+            return Err(err);
+        }
+        if window.0 > 0 {
+            peaks.extend([window.1, window.2]);
+        }
+        std::fs::rename(&part, &file).map_err(io)?;
+        // Two samples (min, max) per 10 ms block at a nominal 200 Hz: peaks_of keeps them as is.
+        let _ = cache::waveform(&e.path, cache_dir, || {
+            Ok(AudioBuffer {
+                sample_rate: 200,
+                channels: 1,
+                samples: peaks,
+            })
+        });
+    }
+    Ok(Arc::new(AudioPcm::open(&file).map_err(io)?))
 }
 
 /// A decoded frame owned by the caller, ready to upload.
@@ -231,6 +354,7 @@ pub struct OwnedFrame {
     pub bytes: Vec<u8>,
     pub stride: usize,
     pub color: SourceColor,
+    pub orient: Orient,
 }
 
 impl OwnedFrame {
@@ -245,6 +369,7 @@ impl OwnedFrame {
                 PixelFormat::Rgba8 => Pixels::Rgba8 { data, stride },
             },
             color: self.color,
+            orient: self.orient,
         }
     }
 }
@@ -283,7 +408,8 @@ impl Decoders {
                 return Ok(s.clone());
             }
             let f = win::wic::decode_image(&e.path)?;
-            let still = Arc::new(own(f, e.color, false)?);
+            // WIC already turned the still upright.
+            let still = Arc::new(own(f, e.color, false, Orient::default())?);
             self.stills.insert(e.path.clone(), still.clone());
             return Ok(still);
         }
@@ -302,6 +428,8 @@ impl Decoders {
             ),
         };
         let pts = pts_at(index, t);
+        // Proxies are encoded from unrotated decoder output, so both carry the source rotation.
+        let orient = Orient(e.probe.video.first().map_or(1, |v| v.orientation()));
         if !self.open.contains_key(path) {
             if self.open.len() >= 8 {
                 self.open.clear();
@@ -315,7 +443,7 @@ impl Decoders {
                     // Royalty-free codecs Windows can't decode go through the FFmpeg helper.
                     let f = ffmpeg::frame_at(&self.tools, path, v, index, pts)
                         .map_err(|_| ApiError::from(err))?;
-                    return Ok(Arc::new(own(f, e.color, used_proxy)?));
+                    return Ok(Arc::new(own(f, e.color, used_proxy, orient)?));
                 }
             }
         }
@@ -327,11 +455,11 @@ impl Decoders {
         } else {
             e.color
         };
-        Ok(Arc::new(own(f, color, used_proxy)?))
+        Ok(Arc::new(own(f, color, used_proxy, orient)?))
     }
 }
 
-fn own(f: Frame, color: SourceColor, proxy: bool) -> ApiResult<OwnedFrame> {
+fn own(f: Frame, color: SourceColor, proxy: bool, orient: Orient) -> ApiResult<OwnedFrame> {
     let FrameData::Cpu { bytes, stride } = f.data else {
         return Err(ApiError::new("media_error", "frame is not on the CPU"));
     };
@@ -343,6 +471,7 @@ fn own(f: Frame, color: SourceColor, proxy: bool) -> ApiResult<OwnedFrame> {
         bytes,
         stride,
         color,
+        orient,
     })
 }
 
@@ -369,6 +498,96 @@ mod tests {
         assert_eq!(pts_at(&ix, fps.tick_of(3)), 4004);
         assert_eq!(pts_at(&ix, fps.tick_of(3) - Tick(1)), 4004);
         assert_eq!(pts_at(&ix, fps.tick_of(99)), 10010);
+    }
+
+    fn fixture(name: &str) -> Option<(Tools, PathBuf, PathBuf)> {
+        let p = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../test-media")
+            .join(name);
+        let Ok(tools) = Tools::locate() else {
+            eprintln!("SKIP: no FFmpeg helper");
+            return None;
+        };
+        if !p.is_file() {
+            eprintln!(
+                "SKIP: {} missing; run scripts/make-test-media.ps1",
+                p.display()
+            );
+            return None;
+        }
+        let cache = std::env::temp_dir()
+            .join("editelier-library-tests")
+            .join(name);
+        let _ = std::fs::remove_dir_all(&cache);
+        Some((tools, p, cache))
+    }
+
+    #[test]
+    fn phone_clip_shows_upright() {
+        use editelier_render::{Fonts, Gpu, Renderer};
+        let Some((tools, path, cache)) = fixture("phone_rot90cw_h264.mp4") else {
+            return;
+        };
+        let e = load(&tools, &cache, &path).unwrap();
+        let v = &e.probe.video[0];
+        assert_eq!(v.display_size(), (360, 640));
+        let mut dec = Decoders::new(tools, None);
+        let f = dec.decode(&e, Tick(TICKS_PER_SECOND / 2), false).unwrap();
+        assert_eq!((f.width, f.height, f.orient), (640, 360, Orient(6)));
+        let Ok(gpu) = Gpu::headless() else {
+            return eprintln!("SKIP: no GPU");
+        };
+        let mut r = Renderer::new(&gpu, Fonts::bundled());
+        r.upload(&f.source()).unwrap();
+        let (w, h) = v.display_size();
+        r.compose((w, h), &[], 1.0);
+        let out = r.read_rgba8().unwrap();
+        // Stored marker: red top-left, lime top-right, blue bottom-left. Turned 90 degrees
+        // clockwise: blue top-left, red top-right, lime bottom-right.
+        let at = |x: u32, y: u32| {
+            let i = ((y * w + x) * 4) as usize;
+            match (out[i] > 150, out[i + 1] > 150, out[i + 2] > 150) {
+                (true, false, false) => 'R',
+                (false, true, false) => 'G',
+                (false, false, true) => 'B',
+                _ => 'X',
+            }
+        };
+        let got: String = [
+            (w / 8, h / 8),
+            (w * 7 / 8, h / 8),
+            (w / 8, h * 7 / 8),
+            (w * 7 / 8, h * 7 / 8),
+        ]
+        .iter()
+        .map(|&(x, y)| at(x, y))
+        .collect();
+        assert_eq!(got, "BRXG");
+        // The thumbnail is upright too.
+        let bmp = std::fs::read(e.thumb.unwrap()).unwrap();
+        let (tw, th) = (
+            i32::from_le_bytes(bmp[18..22].try_into().unwrap()),
+            -i32::from_le_bytes(bmp[22..26].try_into().unwrap()),
+        );
+        assert!(th > tw, "thumbnail {tw}x{th}");
+    }
+
+    #[test]
+    fn audio_lines_up_with_first_video_frame() {
+        let Some((tools, path, cache)) = fixture("av_offset_h264_aac.mp4") else {
+            return;
+        };
+        let e = load(&tools, &cache, &path).unwrap();
+        let a = load_audio(&tools, &cache, &e).unwrap();
+        let mut buf = vec![0f32; 96_000 * 2];
+        a.read(0, &mut buf);
+        let onset = buf.chunks(2).position(|f| f[0].abs() > 0.25).unwrap();
+        // Burst at 1.000 s of source time (reaches 0.25 ~4 samples in); 1 ms = 48 samples.
+        assert!((onset as i64 - 48_004).abs() <= 48, "onset {onset}");
+        // Cached: a second load reads the same file.
+        let again = load_audio(&tools, &cache, &e).unwrap();
+        assert_eq!(again.frames, a.frames);
+        assert!(cache::waveform(&path, &cache, || panic!("waveform not cached")).is_ok());
     }
 
     #[test]

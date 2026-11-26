@@ -127,7 +127,8 @@ struct QuadU {
     // fs_quad: 0 = premultiplied RGBA texture (clips), 1 = coverage mask in .r (titles).
     // fs_out: 1 = the target is an sRGB format (the hardware re-encodes, so pre-decode).
     mode: u32,
-    _pad0: u32,
+    // vs_quad: EXIF orientation code of the sampled texture (0/1 = as stored).
+    orient: u32,
     _pad1: u32,
     _pad2: u32,
 };
@@ -135,6 +136,20 @@ struct QuadU {
 @group(0) @binding(0) var quad_tex: texture_2d<f32>;
 @group(0) @binding(1) var quad_samp: sampler;
 @group(0) @binding(2) var<uniform> quad_u: QuadU;
+
+// Display uv -> stored uv for EXIF orientation `o`.
+fn orient_uv(d: vec2<f32>, o: u32) -> vec2<f32> {
+    switch o {
+        case 2u: { return vec2<f32>(1.0 - d.x, d.y); }
+        case 3u: { return 1.0 - d; }
+        case 4u: { return vec2<f32>(d.x, 1.0 - d.y); }
+        case 5u: { return d.yx; }
+        case 6u: { return vec2<f32>(d.y, 1.0 - d.x); }
+        case 7u: { return 1.0 - d.yx; }
+        case 8u: { return vec2<f32>(1.0 - d.y, d.x); }
+        default: { return d; }
+    }
+}
 
 @vertex fn vs_quad(@builtin(vertex_index) i: u32) -> VsOut {
     var corners = array<vec2<f32>, 6>(
@@ -146,7 +161,7 @@ struct QuadU {
     var o: VsOut;
     // uv.y = 0 is the top edge (texture space).
     o.pos = vec4<f32>(mix(r.x, r.z, c.x), mix(r.w, r.y, c.y), 0.0, 1.0);
-    o.uv = c;
+    o.uv = orient_uv(c, quad_u.orient);
     return o;
 }
 
