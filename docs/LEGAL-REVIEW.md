@@ -20,6 +20,8 @@ Run before every public release (GitHub Release or Store submission). Engineerin
 - [ ] Licence terms / Store terms say FFmpeg is LGPLv2.1, not ours, and don't forbid reverse engineering of it.
 - [ ] Users can swap the DLLs: portable ZIP on GitHub Releases + documented steps (MSIX installs are read-only; interpretation unverified).
 - [ ] Repeat on every FFmpeg bump.
+- **Status (2026-11-26):** `cargo xtask package` currently bundles the **dev** BtbN `lgpl-shared` build from `third_party/ffmpeg/` (contains software h264/hevc/aac, so A-LEGAL-01 fails on it by design). Dev/test MSIX only: never publish it. The shipped build must be our own, recipe and flags in `packaging/ffmpeg-build.md` (`packaging/build-ffmpeg.sh` is an untested stub). BtbN's lgpl variant is **LGPLv3** (`--enable-version3`): either drop that for LGPLv2.1 or change the About/notices text to LGPLv3.
+- Package layout: `licences/FFmpeg/LICENSE.txt` (the build's own licence text) and `licences/FFmpeg/BUILD-FFMPEG.txt` (`-buildconf` + pin + source links) are written by `cargo xtask package`.
 
 ## 3. Codec patents ([R04 §3](research/04-windows-media-legal.md))
 - [ ] H.264, HEVC, AAC encode/decode only via Windows Media Foundation (D3). Our binaries contain no implementation of them.

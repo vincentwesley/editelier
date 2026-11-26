@@ -47,6 +47,10 @@ All permissive: `wgpu` 30 and its `wgpu-*`/`naga` crates (MIT OR Apache-2.0), `c
 
 Beyond the crates above and Tauri's own (listed in `docs/spikes/preview-surface.md`): `cpal` 0.18 (Apache-2.0) with `dasp_*` (MIT OR Apache-2.0) for audio output, `tauri-plugin-dialog` 2.8 (Apache-2.0 OR MIT) with `rfd` (MIT) for file pickers, `ebur128` (MIT, via `editelier-export`). Full list: `cargo tree -p editelier -e normal -f "{p} {l}"`.
 
-## FFmpeg (not in the repo yet)
+## FFmpeg (not in the repo; bundled in the MSIX)
 
-Dev builds run `ffprobe.exe`/`ffmpeg.exe` from a BtbN `lgpl-shared` build that `scripts/fetch-ffmpeg.ps1` fetches into gitignored `third_party/ffmpeg/` (LGPL-2.1-or-later). Shipped builds will use our own LGPL build with the software H.264/HEVC/AAC codecs disabled (D3). Its notice, licence text and source link go here when it lands.
+Dev builds run `ffprobe.exe`/`ffmpeg.exe` from a BtbN `lgpl-shared` build that `scripts/fetch-ffmpeg.ps1` fetches into gitignored `third_party/ffmpeg/` (LGPL; this BtbN variant is built with `--enable-version3`, so LGPL-3.0-or-later). `cargo xtask package` copies `ffmpeg.exe`, `ffprobe.exe` and the `av*`/`sw*` DLLs (original names) into the MSIX, with `licences/FFmpeg/LICENSE.txt` and `licences/FFmpeg/BUILD-FFMPEG.txt` (configure line, pin, source links: https://github.com/FFmpeg/FFmpeg, https://github.com/BtbN/FFmpeg-Builds). Shipped builds will use our own LGPL build with the software H.264/HEVC/AAC codecs disabled (D3, `packaging/ffmpeg-build.md`); the libraries bundled inside it get listed here when it lands.
+
+## MSIX package (`packaging/`)
+
+Visual assets in `packaging/Assets/` are scaled from the Vin's Atelier mark (`mark-b`), all rights reserved (see `NOTICE.md`), not MIT. The package also carries `LICENSE`, `NOTICE.md`, this file and the fonts' `OFL.txt` under `licences/`.
