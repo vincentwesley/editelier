@@ -1,5 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(all(feature = "agent", debug_assertions))]
+mod agent;
+#[cfg(all(feature = "agent", not(debug_assertions)))]
+compile_error!("the agent channel is debug-only (D7): never build release with --features agent");
 mod api;
 mod commands;
 mod engine;
@@ -150,6 +154,9 @@ fn main() {
                 }
             });
 
+            #[cfg(all(feature = "agent", debug_assertions))]
+            agent::start(app.handle());
+
             if measure {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
@@ -165,6 +172,8 @@ fn main() {
             if let RunEvent::Exit = ev {
                 let state = app.state::<AppState>();
                 state.core.engine.shutdown();
+                #[cfg(all(feature = "agent", debug_assertions))]
+                agent::stop();
                 if let Some(mut p) = state.preview.lock().unwrap().take() {
                     p.shutdown();
                 }

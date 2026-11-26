@@ -39,3 +39,13 @@ windows = { version = "0.62.2", features = [
 [features]
 # Tauri CLI enables this for `tauri build`; also used for the self-contained --measure run.
 custom-protocol = ["tauri/custom-protocol"]
+# Debug-only agent control channel (D7): `cargo build --features agent`, enabled by EDITELIER_AGENT=1.
+agent = [
+  "windows/Win32_Security",
+  "windows/Win32_Security_Authorization",
+  "windows/Win32_Security_Cryptography",
+  "windows/Win32_Storage_FileSystem",
+  "windows/Win32_Storage_Xps",
+  "windows/Win32_System_IO",
+  "windows/Win32_System_Pipes",
+]

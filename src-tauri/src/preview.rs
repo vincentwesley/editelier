@@ -180,7 +180,7 @@ impl Preview {
 
 /// Preview canvas: the project size, at most 1920 on the long edge (4K projects preview at
 /// 1080p-class resolution; export renders full size).
-fn canvas_size(w: u32, h: u32) -> ((u32, u32), f32) {
+pub(crate) fn canvas_size(w: u32, h: u32) -> ((u32, u32), f32) {
     let s = (1920.0 / w.max(h).max(1) as f32).min(1.0);
     let even = |v: f32| ((v.round() as u32) & !1).max(2);
     ((even(w as f32 * s), even(h as f32 * s)), s)

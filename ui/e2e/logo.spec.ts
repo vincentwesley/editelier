@@ -140,8 +140,10 @@ test.describe("desktop", () => {
     await open(page);
     await expect(page.locator(SIGN)).toContainText("Copyright 2026 Vin's Atelier.");
     await expect(page.locator(SIGN)).toContainText("Designed and built by Vin.");
-    await expect(page.locator(SIGN).getByRole("link", { name: "@portus_workstation" })).toBeVisible();
-    await expect(page.locator(SIGN).getByRole("link", { name: "@wason25_pz" })).toBeVisible();
+    // House kit markup: the "Logo by" artist links sit in the credits card, after the sign-off.
+    const credit = page.locator(".creator__links--credit");
+    await expect(credit.getByRole("link", { name: /@portus_workstation/ })).toBeVisible();
+    await expect(credit.getByRole("link", { name: /@wason25_pz/ })).toBeVisible();
     await page.waitForTimeout(800); // let entrance animations settle before axe
     const r = await new AxeBuilder({ page }).include(SIGN).analyze();
     expect(r.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target).join(" ")}`)).toEqual([]);
