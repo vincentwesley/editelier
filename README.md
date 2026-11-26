@@ -19,7 +19,7 @@ npm run build      # ui/dist (Tauri frontendDist)
 - Data: all media and projects stay on your device. The UI stores only small preferences (theme, logo size) in local storage.
 
 ## Credits
-Designed and built by Vin, Vin's Atelier (https://vwesley.dev). Logo by Portus Workstation, Instagram @portus_workstation (art) and @wason25_pz (main); the logo is all rights reserved (see `NOTICE.md`), not covered by the MIT licence.
+Designed and built by Vin, Vin's Atelier (https://vwesley.dev). Vin's Atelier logo by Portus Workstation, Instagram @portus_workstation (art) and @wason25_pz (main). The Editelier logo (`brand/`) is Editelier's own mark. Both logos are all rights reserved (see `NOTICE.md`), not covered by the MIT licence.
 
 ## Licence
 MIT, see `LICENSE`; reserved artwork in `NOTICE.md`; third-party material in `THIRD_PARTY_NOTICES.md`.

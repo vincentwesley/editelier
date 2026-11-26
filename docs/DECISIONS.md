@@ -117,3 +117,7 @@ Owner-approved 2026-11-25. Each entry: decision, why, research link. Research fi
 
 ## D21 Photo scope: shared pipeline, not a second app (owner, 2026-11-26)
 Photos are one-frame clips through the same grade pipeline (D20): import, Looks + grade, light/colour, crop/straighten, text, copy grade to many, carousel export, photos on the timeline. Not planned: spot healing/retouch, masks/layers, a photo library. Reason: the colour goal transfers to stills almost for free and carousel + reel from one project is a differentiator; a full photo editor would dilute video and colour quality. RAW develop stays (M9) because RAW gives the most grading room. Plan: `docs/PLAN.md` M4.
+
+## D22 Editelier has its own logo (owner, 2026-11-26)
+- **Decision:** every project has its own logo; the Vin's Atelier studio logo appears only in the credits sign-off (Welcome footer + About credits, D13). Editelier's mark ("tracks": a playhead beside three coloured clips that reads as an E) and its Space Grotesk wordmark live in `brand/` and drive the favicon, top bars, About header, Tauri icon and MSIX tiles. The mark is a placeholder-quality original by the dev team, all rights reserved (`NOTICE.md`); the owner may commission a replacement, which only needs new SVGs in `brand/` and the regenerate steps in `brand/README.md`.
+- **Research:** root `CLAUDE.md` §2 Brand; `brand/README.md` (options explored, legibility sheet).
