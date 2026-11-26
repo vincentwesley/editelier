@@ -96,6 +96,27 @@ pub enum Command {
     DeleteMusic {
         id: Id,
     },
+    /// Rename the project (1..=120 characters after trimming).
+    Rename {
+        name: String,
+    },
+    /// Change the canvas size; `aspect` is the shell's aspect id, kept for display.
+    SetCanvas {
+        aspect: String,
+        width: u32,
+        height: u32,
+    },
+    /// Cut title `id` at the frame containing `at`. Returns the id of the right half.
+    SplitTitle {
+        id: Id,
+        at: Tick,
+    },
+    /// Cut music clip `id` at the frame containing `at`; the halves keep the outer fades.
+    /// Returns the id of the right half.
+    SplitMusic {
+        id: Id,
+        at: Tick,
+    },
 }
 
 /// Gain range a music clip accepts, in dB.
@@ -120,6 +141,10 @@ impl Command {
             Command::EditMusic { .. } => "edit_music",
             Command::SetMusicGain { .. } => "set_music_gain",
             Command::DeleteMusic { .. } => "delete_music",
+            Command::Rename { .. } => "rename",
+            Command::SetCanvas { .. } => "set_canvas",
+            Command::SplitTitle { .. } => "split_title",
+            Command::SplitMusic { .. } => "split_music",
         }
     }
 
@@ -377,6 +402,78 @@ impl Command {
                 let i = music_index(p, *id)?;
                 Arc::make_mut(&mut p.timeline.music).remove(i);
                 Ok(None)
+            }
+            Command::Rename { name } => {
+                let name = name.trim();
+                if name.is_empty() || name.chars().count() > 120 {
+                    return Err(Error::Invalid("a project name must be 1 to 120 characters"));
+                }
+                p.info.name = name.to_owned();
+                Ok(None)
+            }
+            Command::SetCanvas {
+                aspect,
+                width,
+                height,
+            } => {
+                let ok = |v: &u32| (2..=8192).contains(v) && v.is_multiple_of(2);
+                if !ok(width) || !ok(height) || aspect.len() > 16 {
+                    return Err(Error::Invalid(
+                        "canvas sides must be even and between 2 and 8192 pixels",
+                    ));
+                }
+                (p.settings.width, p.settings.height) = (*width, *height);
+                p.info.aspect = aspect.clone();
+                Ok(None)
+            }
+            Command::SplitTitle { id, at } => {
+                let i = p
+                    .timeline
+                    .titles
+                    .iter()
+                    .position(|t| t.id == *id)
+                    .ok_or(Error::NotFound(*id))?;
+                let at = fps.snap(*at);
+                let t = &p.timeline.titles[i];
+                if at <= t.start || at >= t.start + t.duration {
+                    return Err(Error::Invalid("the playhead is not inside that title"));
+                }
+                let mut right = TitleClip {
+                    start: at,
+                    duration: t.start + t.duration - at,
+                    ..t.clone()
+                };
+                right.id = p.alloc_id();
+                let rid = right.id;
+                let titles = Arc::make_mut(&mut p.timeline.titles);
+                titles[i].duration = at - titles[i].start;
+                titles.insert(i + 1, right);
+                Ok(Some(rid))
+            }
+            Command::SplitMusic { id, at } => {
+                let i = music_index(p, *id)?;
+                let at = fps.snap(*at);
+                let c = &p.timeline.music[i];
+                if at <= c.start || at >= c.start + c.duration() {
+                    return Err(Error::Invalid("the playhead is not inside that music clip"));
+                }
+                let cut = c.source_in + (at - c.start);
+                let mut right = MusicClip {
+                    start: at,
+                    source_in: cut,
+                    fade_in: Tick::ZERO,
+                    fade_out: c.fade_out.min(c.source_out - cut),
+                    ..c.clone()
+                };
+                right.id = p.alloc_id();
+                let rid = right.id;
+                let music = Arc::make_mut(&mut p.timeline.music);
+                let left = &mut music[i];
+                left.source_out = cut;
+                left.fade_out = Tick::ZERO;
+                left.fade_in = left.fade_in.min(left.duration());
+                music.insert(i + 1, right);
+                Ok(Some(rid))
             }
         }
     }
