@@ -12,14 +12,22 @@ publish = false
 tauri-build = { version = "2.7.6", features = [] }
 
 [dependencies]
-tauri = { version = "2.12.7", features = [] }
+tauri = { version = "2.12.7", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2.8.4"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+cpal = "0.18.2"
+editelier-core = { path = "../crates/editelier-core" }
+editelier-media = { path = "../crates/editelier-media" }
+editelier-export = { path = "../crates/editelier-export" }
+editelier-render = { path = "../crates/editelier-render" }
 wgpu = { version = "30.0.2", default-features = false, features = ["dx12", "wgsl"] }
 raw-window-handle = "0.6.2"
 pollster = "1.0.3"
 # Same major as tauri 2.12 uses, so HWND types match and no second copy is built.
 windows = { version = "0.62.2", features = [
   "Win32_Foundation",
+  "Win32_Graphics_Direct3D11",
   "Win32_Graphics_Gdi",
   "Win32_System_LibraryLoader",
   "Win32_System_Threading",

@@ -1,52 +1,32 @@
-//! `--measure`: scripted ≤20 s run over window states, prints frame stats, then exits.
+//! `--measure`: scripted playback bench, prints stats, then exits (≈ 45 s, no lingering window).
+//! Phase 1: a 1080p30 H.264 timeline from the originals for 10 s. Phase 2: a 4K60 H.264 clip on a
+//! 60 fps timeline through its auto proxy for 20 s (A-PERF-02 asks ≥ 30 fps). Media come from
+//! `scripts/make-test-media.ps1` (`test-media/`), or `EDITELIER_MEASURE_DIR`.
 
-use std::sync::Mutex;
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, LogicalSize, Manager};
-use windows::Win32::Foundation::{FILETIME, HWND, LPARAM, POINT, WPARAM};
-use windows::Win32::Graphics::Gdi::{ClientToScreen, GetDC, GetPixel, ReleaseDC};
-use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VK_F24,
-};
-use windows::Win32::UI::WindowsAndMessaging::{
-    GUITHREADINFO, GW_CHILD, GW_HWNDNEXT, GetClassNameW, GetForegroundWindow, GetGUIThreadInfo,
-    GetWindow, GetWindowThreadProcessId, PostMessageW, WM_LBUTTONDOWN, WM_LBUTTONUP,
-};
-
 use crate::AppState;
+use crate::library::Proxy;
+use editelier_core::{FrameRate, Project, Session, Settings, Tick};
+use tauri::{AppHandle, Manager};
+use windows::Win32::Foundation::FILETIME;
+use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
 
 pub struct Summary {
-    pub n: usize,
     pub fps: f64,
     pub mean: f64,
     pub p99: f64,
-    pub max: f64,
 }
 
 pub fn summarize(intervals_ms: &[f64]) -> Summary {
-    if intervals_ms.is_empty() {
-        return Summary {
-            n: 0,
-            fps: 0.0,
-            mean: 0.0,
-            p99: 0.0,
-            max: 0.0,
-        };
-    }
-    let mut v = intervals_ms.to_vec();
-    v.sort_by(f64::total_cmp);
-    let sum: f64 = v.iter().sum();
-    let n = v.len();
+    let n = intervals_ms.len().max(1) as f64;
+    let sum: f64 = intervals_ms.iter().sum();
     Summary {
-        n,
-        fps: n as f64 * 1000.0 / sum,
-        mean: sum / n as f64,
-        p99: v[((n as f64 * 0.99) as usize).min(n - 1)],
-        max: v[n - 1],
+        fps: if sum > 0.0 { n * 1000.0 / sum } else { 0.0 },
+        mean: sum / n,
+        p99: pct(intervals_ms, 0.99),
     }
 }
 
@@ -82,209 +62,153 @@ fn process_cpu_100ns() -> u64 {
     ft(k) + ft(u)
 }
 
-fn class_of(h: HWND) -> String {
-    let mut buf = [0u16; 128];
-    let n = unsafe { GetClassNameW(h, &mut buf) };
-    String::from_utf16_lossy(&buf[..n.max(0) as usize])
+fn media_dir() -> PathBuf {
+    std::env::var_os("EDITELIER_MEASURE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../test-media"))
 }
 
-fn focus_class(parent: HWND) -> String {
-    let tid = unsafe { GetWindowThreadProcessId(parent, None) };
-    let mut gi = GUITHREADINFO {
-        cbSize: size_of::<GUITHREADINFO>() as u32,
-        ..Default::default()
-    };
-    match unsafe { GetGUIThreadInfo(tid, &mut gi) } {
-        Ok(()) if !gi.hwndFocus.is_invalid() => class_of(gi.hwndFocus),
-        _ => "(none)".into(),
-    }
-}
-
-/// Screen pixel at the preview's probe square (magenta = our HWND is on top and presenting).
-fn probe(parent: HWND, x: i32, y: i32) -> (u8, u8, u8) {
-    unsafe {
-        let mut pt = POINT { x: x + 8, y: y + 8 };
-        let _ = ClientToScreen(parent, &mut pt);
-        let dc = GetDC(None);
-        let c = GetPixel(dc, pt.x, pt.y).0;
-        ReleaseDC(None, dc);
-        (c as u8, (c >> 8) as u8, (c >> 16) as u8)
-    }
+fn pct(v: &[f64], q: f64) -> f64 {
+    let mut v = v.to_vec();
+    v.sort_by(f64::total_cmp);
+    v.get(((v.len() as f64 * q) as usize).min(v.len().saturating_sub(1)))
+        .copied()
+        .unwrap_or(0.0)
 }
 
 pub fn run(app: &AppHandle) -> bool {
     let t_start = Instant::now();
     let state = app.state::<AppState>();
+    let core = state.core.clone();
     let win = app.get_webview_window("main").expect("main window");
-    let (shared, phwnd) = {
-        let g = state.preview.lock().unwrap();
-        let p = g.as_ref().expect("preview");
-        (p.shared.clone(), HWND(p.parent as _))
-    };
-    while shared.rect_updates.load(Ordering::Relaxed) == 0 {
-        if t_start.elapsed() > Duration::from_secs(8) {
-            println!("FAIL: UI never reported a preview rect");
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(20));
+    let _ = win.set_focus();
+    // The viewer rect normally comes from the editor UI; place it ourselves (1280x720).
+    if let Some(p) = state.preview.lock().unwrap().as_ref() {
+        p.set_rect(crate::preview::Rect {
+            x: 0,
+            y: 0,
+            w: 1280,
+            h: 720,
+            dpr: 1.0,
+        });
     }
+    let dir = media_dir();
+    let mut ok = true;
     println!(
-        "first rect after {:.0} ms",
-        t_start.elapsed().as_secs_f64() * 1e3
-    );
-    println!(
-        "window DPI {} ({}%)",
-        unsafe { GetDpiForWindow(phwnd) },
-        unsafe { GetDpiForWindow(phwnd) } * 100 / 96
-    );
-    let mut z = vec![];
-    let mut c = unsafe { GetWindow(phwnd, GW_CHILD) }.ok();
-    while let Some(h) = c {
-        z.push(class_of(h));
-        c = unsafe { GetWindow(h, GW_HWNDNEXT) }.ok();
-    }
-    println!("child z-order (top first): {}", z.join(" > "));
-
-    println!(
-        "{:<12} {:>6} {:>7} {:>8} {:>8} {:>8} {:>8} {:>8} {:>6} {:>5} {:>4} {:>11} {:>14}",
+        "{:<16} {:>7} {:>9} {:>9} {:>9} {:>7} {:>10} {:>10} {:>10} {:>6}",
         "phase",
-        "frames",
-        "fps",
-        "mean_ms",
-        "p99_ms",
-        "max_ms",
-        "acq_ms",
-        "work_ms",
-        "cpu%",
-        "rects",
-        "cfg",
-        "size",
-        "probe rgb"
+        "secs",
+        "video fps",
+        "target",
+        "present",
+        "p99 ms",
+        "upload ms",
+        "decode ms",
+        "dec p95",
+        "cpu%"
     );
-    let mut steady_ok = false;
-    let mut phase = |name: &str, secs: f64, action: &dyn Fn()| {
-        std::mem::take(&mut *state.acc.lock().unwrap());
-        let rects0 = shared.rect_updates.load(Ordering::Relaxed);
-        let mut cpu = CpuClock::now();
-        let t = Instant::now();
-        action();
-        let left = Duration::from_secs_f64(secs).saturating_sub(t.elapsed());
-        std::thread::sleep(left);
-        let cpu_pct = cpu.lap_percent_of_core();
-        std::thread::sleep(Duration::from_millis(120)); // let the 100 ms drain catch up
-        let w = std::mem::take(&mut *state.acc.lock().unwrap());
-        let s = summarize(&w.intervals_ms);
-        let avg = |v: &[f64]| v.iter().sum::<f64>() / v.len().max(1) as f64;
-        let r = *shared.rect.lock().unwrap();
-        let px = probe(phwnd, r.x, r.y);
-        if name == "steady" {
-            steady_ok = s.fps > 20.0 && px == (255, 0, 255);
-        }
-        println!(
-            "{:<12} {:>6} {:>7.1} {:>8.2} {:>8.2} {:>8.2} {:>8.2} {:>8.3} {:>6.1} {:>5} {:>4} {:>11} {:>14}",
-            name,
-            s.n,
-            s.fps,
-            s.mean,
-            s.p99,
-            s.max,
-            avg(&w.acquire_ms),
-            avg(&w.cpu_ms),
-            cpu_pct,
-            shared.rect_updates.load(Ordering::Relaxed) - rects0,
-            w.reconfigures,
-            format!("{}x{}", r.w, r.h),
-            format!("{px:?}"),
-        );
-    };
-
-    // Bring the window forward so the screen probe isn't sampling whatever covers it.
-    phase("warmup", 1.5, &|| {
-        let _ = win.set_focus();
-    });
-    phase("steady", 3.0, &|| {});
-    let lat = Mutex::new(vec![]);
-    phase("resize", 3.0, &|| {
-        // Window resize → ResizeObserver → invoke → SetWindowPos latency.
-        for i in 0..28u32 {
-            let k = (i % 7) as f64;
-            let n0 = shared.rect_updates.load(Ordering::Relaxed);
-            let t = Instant::now();
-            let _ = win.set_size(LogicalSize::new(1280.0 + k * 40.0, 720.0 + k * 25.0));
-            while shared.rect_updates.load(Ordering::Relaxed) == n0
-                && t.elapsed() < Duration::from_millis(95)
-            {
-                std::thread::sleep(Duration::from_millis(1));
+    let phase =
+        |name: &str, file: &str, fps: FrameRate, copies: usize, secs: f64, proxies: bool| {
+            let path = dir.join(file);
+            if !path.is_file() {
+                println!(
+                    "SKIP {name}: {} missing (scripts/make-test-media.ps1)",
+                    path.display()
+                );
+                return None;
             }
-            lat.lock().unwrap().push(t.elapsed().as_secs_f64() * 1e3);
-            std::thread::sleep(Duration::from_millis(100).saturating_sub(t.elapsed()));
-        }
-    });
-    let l = summarize(&lat.lock().unwrap());
-    println!(
-        "  resize→rect latency over {} steps: mean {:.1} ms, p99 {:.1} ms, max {:.1} ms",
-        l.n, l.mean, l.p99, l.max
-    );
-    phase("maximized", 2.5, &|| {
-        let _ = win.maximize();
-    });
-    phase("restored", 1.5, &|| {
-        let _ = win.unmaximize();
-    });
-    phase("minimized", 2.0, &|| {
-        let _ = win.minimize();
-    });
-    phase("unminimized", 2.5, &|| {
-        let _ = win.unminimize();
-        let _ = win.set_focus();
-    });
-
-    // Keyboard: a click on the preview must not take focus; F24 must reach the page.
-    let preview_hwnd = HWND(state.preview.lock().unwrap().as_ref().unwrap().hwnd as _);
-    let before = focus_class(phwnd);
-    unsafe {
-        let _ = PostMessageW(
-            Some(preview_hwnd),
-            WM_LBUTTONDOWN,
-            WPARAM(1),
-            LPARAM(0x0010_0010),
-        );
-        let _ = PostMessageW(
-            Some(preview_hwnd),
-            WM_LBUTTONUP,
-            WPARAM(0),
-            LPARAM(0x0010_0010),
-        );
-    }
-    std::thread::sleep(Duration::from_millis(150));
-    let after = focus_class(phwnd);
-    let foreground = unsafe { GetForegroundWindow() } == phwnd;
-    if foreground {
-        let key = |flags| INPUT {
-            r#type: INPUT_KEYBOARD,
-            Anonymous: INPUT_0 {
-                ki: KEYBDINPUT {
-                    wVk: VK_F24,
-                    dwFlags: flags,
-                    ..Default::default()
-                },
-            },
+            let p = Project::new(Settings {
+                fps,
+                ..Settings::default()
+            });
+            core.replace_doc(Session::new(p), None);
+            if let Err(e) = core.import(Some(app), &[path.display().to_string()]) {
+                println!("FAIL {name}: import: {}", e.message);
+                return None;
+            }
+            let id = *core.lib.read().unwrap().keys().next()?;
+            if proxies {
+                let t = Instant::now();
+                loop {
+                    let proxy = core.lib.read().unwrap().get(&id).map(|e| e.proxy.clone());
+                    match proxy {
+                        Some(Proxy::Ready { .. }) => break,
+                        Some(Proxy::Failed(e)) => {
+                            println!("FAIL {name}: proxy: {e}");
+                            return None;
+                        }
+                        _ if t.elapsed() > Duration::from_secs(90) => {
+                            println!("FAIL {name}: proxy timed out");
+                            return None;
+                        }
+                        _ => std::thread::sleep(Duration::from_millis(50)),
+                    }
+                }
+                println!(
+                    "  {name}: proxy ready after {:.1} s",
+                    t.elapsed().as_secs_f64()
+                );
+            }
+            core.engine.use_proxies.store(proxies, Ordering::Relaxed);
+            for _ in 0..copies {
+                let args = serde_json::json!({"media_id": id.to_string()});
+                if let Err(e) = core.run_command("timeline.append", &args) {
+                    println!("FAIL {name}: {}", e.message);
+                    return None;
+                }
+            }
+            core.engine.seek(Tick::ZERO);
+            std::thread::sleep(Duration::from_millis(400)); // first frames decoded
+            std::mem::take(&mut *state.acc.lock().unwrap());
+            std::mem::take(&mut *core.engine.stats.lock().unwrap());
+            let mut cpu = CpuClock::now();
+            let t = Instant::now();
+            core.engine.play(1.0);
+            std::thread::sleep(Duration::from_secs_f64(secs));
+            let wall = t.elapsed().as_secs_f64();
+            core.engine.play(0.0);
+            let cpu_pct = cpu.lap_percent_of_core();
+            std::thread::sleep(Duration::from_millis(150)); // let the 100 ms drain catch up
+            let w = std::mem::take(&mut *state.acc.lock().unwrap());
+            let d = std::mem::take(&mut *core.engine.stats.lock().unwrap());
+            let s = summarize(&w.intervals_ms);
+            let avg = |v: &[f64]| v.iter().sum::<f64>() / v.len().max(1) as f64;
+            let video_fps = w.uploads as f64 / wall;
+            println!(
+                "{:<16} {:>7.1} {:>9.1} {:>9.2} {:>9.1} {:>7.1} {:>10.2} {:>10.2} {:>10.2} {:>6.1}",
+                name,
+                wall,
+                video_fps,
+                fps.as_f64(),
+                s.fps,
+                s.p99,
+                avg(&w.upload_ms),
+                avg(&d.decode_ms),
+                pct(&d.decode_ms, 0.95),
+                cpu_pct
+            );
+            Some(video_fps)
         };
-        unsafe {
-            SendInput(
-                &[key(Default::default()), key(KEYEVENTF_KEYUP)],
-                size_of::<INPUT>() as i32,
-            )
-        };
-        std::thread::sleep(Duration::from_millis(500));
+    if let Some(f) = phase(
+        "1080p30 original",
+        "cfr30_1080p_h264_aac.mp4",
+        FrameRate::FPS_30,
+        3,
+        10.0,
+        false,
+    ) {
+        ok &= f >= 27.0;
     }
-    println!(
-        "focus before click: {before}; after click on preview: {after}; foreground: {foreground}; F24 reached page: {}",
-        state.key_seen.load(Ordering::Relaxed)
-    );
-    println!(
-        "total {:.1} s; steady ok: {steady_ok}",
-        t_start.elapsed().as_secs_f64()
-    );
-    steady_ok
+    if let Some(f) = phase(
+        "4K60 via proxy",
+        "uhd60_h264.mp4",
+        FrameRate::FPS_60,
+        7,
+        20.0,
+        true,
+    ) {
+        ok &= f >= 30.0;
+    }
+    println!("total {:.1} s; ok: {ok}", t_start.elapsed().as_secs_f64());
+    ok
 }

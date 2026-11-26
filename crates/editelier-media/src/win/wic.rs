@@ -13,6 +13,58 @@ use windows_core::{HSTRING, w};
 const HEIF_HELP: &str = "This HEIC/HEIF photo needs the free \"HEIF Image Extensions\" from the \
 Microsoft Store: ms-windows-store://pdp/?ProductId=9PMMSR1CGPWG";
 
+/// Decodes a still to RGBA8 (straight alpha), as stored (EXIF orientation not applied).
+pub fn decode_image(path: &Path) -> Result<crate::Frame> {
+    init()?;
+    unsafe {
+        let factory: IWICImagingFactory =
+            CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
+                .map_err(err("WIC"))?;
+        let decoder = factory
+            .CreateDecoderFromFilename(
+                &HSTRING::from(path),
+                None,
+                GENERIC_READ,
+                WICDecodeMetadataCacheOnDemand,
+            )
+            .map_err(|e| {
+                Error::Unsupported(format!("Windows can't open this image: {}", e.message()))
+            })?;
+        let frame = decoder.GetFrame(0).map_err(err("image frame"))?;
+        let conv = factory
+            .CreateFormatConverter()
+            .map_err(err("format converter"))?;
+        conv.Initialize(
+            &frame,
+            &GUID_WICPixelFormat32bppRGBA,
+            WICBitmapDitherTypeNone,
+            None,
+            0.0,
+            WICBitmapPaletteTypeCustom,
+        )
+        .map_err(err("convert to RGBA"))?;
+        let (mut width, mut height) = (0, 0);
+        conv.GetSize(&mut width, &mut height)
+            .map_err(err("image size"))?;
+        if width == 0 || height == 0 || width > 16384 || height > 16384 {
+            return Err(Error::Unsupported(format!(
+                "images up to 16384 pixels per side are supported (this one is {width}x{height})"
+            )));
+        }
+        let stride = width as usize * 4;
+        let mut bytes = vec![0u8; stride * height as usize];
+        conv.CopyPixels(std::ptr::null(), stride as u32, &mut bytes)
+            .map_err(err("image pixels"))?;
+        Ok(crate::Frame {
+            pts: 0,
+            width,
+            height,
+            format: crate::PixelFormat::Rgba8,
+            data: crate::FrameData::Cpu { bytes, stride },
+        })
+    }
+}
+
 /// Dimensions, format and EXIF orientation of a still.
 pub fn probe_image(path: &Path) -> Result<ProbeInfo> {
     init()?;

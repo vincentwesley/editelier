@@ -1,11 +1,18 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod api;
+mod commands;
+mod engine;
+mod export;
+mod library;
 mod measure;
+mod mix;
 mod preview;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use commands::{Core, Dirs};
 use preview::{Preview, Rect};
 use tauri::{Emitter, Manager, RunEvent};
 
@@ -14,10 +21,16 @@ pub struct AppState {
     /// Frames drained from the render thread every 100 ms; `measure` swaps it per phase.
     pub acc: Arc<Mutex<preview::Window>>,
     pub key_seen: std::sync::atomic::AtomicBool,
+    /// `--measure` places the viewer itself; UI rect reports are ignored then.
+    pub pin_rect: std::sync::atomic::AtomicBool,
+    pub core: Arc<Core>,
 }
 
 #[tauri::command]
 fn preview_set_rect(state: tauri::State<'_, AppState>, rect: Rect) {
+    if state.pin_rect.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     if let Some(p) = state.preview.lock().unwrap().as_ref() {
         p.set_rect(rect);
     }
@@ -43,17 +56,66 @@ struct UiStats {
 
 fn main() {
     let measure = std::env::args().any(|a| a == "--measure");
+    // Never make sound in benches or automated runs: the audio clock runs on a silent sink.
+    let null_audio = measure || std::env::var("EDITELIER_AUDIO").is_ok_and(|v| v == "null");
     tauri::Builder::default()
-        .manage(AppState {
-            preview: Mutex::new(None),
-            acc: Arc::new(Mutex::new(preview::Window::default())),
-            key_seen: false.into(),
-        })
-        .invoke_handler(tauri::generate_handler![preview_set_rect, ui_key])
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![
+            preview_set_rect,
+            ui_key,
+            commands::run_command,
+            commands::project_new,
+            commands::project_open,
+            commands::project_save,
+            commands::recent_projects,
+            commands::import_media,
+            commands::dialog_open_media,
+            commands::dialog_open_project,
+            commands::dialog_pick_folder,
+            commands::export_encoder,
+            commands::export_start,
+            commands::export_cancel,
+            commands::reveal_path,
+            commands::transport_play,
+            commands::transport_seek,
+        ])
         .setup(move |app| {
+            let path = app.path();
+            let local = path.app_local_data_dir()?;
+            let dirs = Dirs {
+                cache: local.join("cache"),
+                data: local.join("data"),
+                videos: path.video_dir().ok(),
+                documents: path.document_dir().ok(),
+            };
+            let gpu = editelier_render::Gpu::headless()
+                .map_err(|e| eprintln!("gpu: {e}"))
+                .ok();
+            let core = Core::new(dirs, gpu.clone());
+            app.manage(AppState {
+                preview: Mutex::new(None),
+                acc: Arc::new(Mutex::new(preview::Window::default())),
+                key_seen: false.into(),
+                pin_rect: measure.into(),
+                core: core.clone(),
+            });
+            if let Some(tools) = core.tools.clone() {
+                let e = core.engine.clone();
+                std::thread::Builder::new()
+                    .name("decode-ahead".into())
+                    .spawn(move || e.decode_loop(tools))?;
+            }
+            let e = core.engine.clone();
+            std::thread::Builder::new()
+                .name("audio-out".into())
+                .spawn(move || e.audio_loop(null_audio))?;
+            commands::tick_loop(app.handle().clone(), core.clone());
+
             let win = app.get_webview_window("main").expect("main window");
             let mut p = Preview::create(win.hwnd()?.0 as isize)?;
-            p.start();
+            if let Some(gpu) = gpu {
+                p.start(gpu, core.engine.clone());
+            }
             let shared = p.shared.clone();
             let state = app.state::<AppState>();
             *state.preview.lock().unwrap() = Some(p);
@@ -100,10 +162,12 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, ev| {
-            if let RunEvent::Exit = ev
-                && let Some(mut p) = app.state::<AppState>().preview.lock().unwrap().take()
-            {
-                p.shutdown();
+            if let RunEvent::Exit = ev {
+                let state = app.state::<AppState>();
+                state.core.engine.shutdown();
+                if let Some(mut p) = state.preview.lock().unwrap().take() {
+                    p.shutdown();
+                }
             }
         });
 }

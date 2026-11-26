@@ -12,6 +12,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+/// Tests that open Media Foundation encoder sessions run one at a time: parallel hardware
+/// sessions (QSV) fail intermittently.
+fn mf_lock() -> std::sync::MutexGuard<'static, ()> {
+    static MF: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    MF.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn tool(name: &str) -> bool {
     Command::new(name)
         .arg("-version")
@@ -246,6 +253,7 @@ fn h264_encoders() -> Vec<EncoderInfo> {
 
 #[test]
 fn enumerates_and_reports_hevc() {
+    let _mf = mf_lock();
     let h264 = h264_encoders();
     assert!(h264.windows(2).all(|w| w[0].vendor <= w[1].vendor));
     let hevc = enumerate_encoders(VideoCodec::Hevc).unwrap();
@@ -254,6 +262,7 @@ fn enumerates_and_reports_hevc() {
 
 #[test]
 fn every_encoder_writes_conformant_mp4() {
+    let _mf = mf_lock();
     if !tool("ffprobe") {
         eprintln!("SKIP: ffprobe not on PATH");
         return;
@@ -276,6 +285,7 @@ fn every_encoder_writes_conformant_mp4() {
 
 #[test]
 fn hevc_encodes_when_present() {
+    let _mf = mf_lock();
     let Some(enc) = enumerate_encoders(VideoCodec::Hevc)
         .unwrap()
         .into_iter()
@@ -297,6 +307,7 @@ fn hevc_encodes_when_present() {
 
 #[test]
 fn zero_copy_texture_input() {
+    let _mf = mf_lock();
     use windows::Win32::Graphics::Direct3D11::*;
     use windows::Win32::Graphics::Dxgi::Common::*;
     let Some(enc) = enumerate_encoders(VideoCodec::H264)
@@ -356,6 +367,7 @@ fn zero_copy_texture_input() {
 
 #[test]
 fn cancel_and_error_remove_partial_file() {
+    let _mf = mf_lock();
     let preset = Preset::builtin_by_id("tiktok-1080x1920").unwrap();
     let dir = out_dir("cancel");
     let cancel = CancelToken::default();
@@ -465,6 +477,7 @@ fn vmaf(path: &Path, preset: &Preset, frames: u64) -> Option<Vmaf> {
 #[test]
 #[ignore]
 fn quality_and_speed_1080p_4k() {
+    let _mf = mf_lock();
     if !tool("ffmpeg") || !tool("ffprobe") {
         eprintln!("SKIP: ffmpeg/ffprobe not on PATH");
         return;

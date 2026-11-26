@@ -135,8 +135,32 @@ pub struct Timeline {
     pub music: Arc<Vec<MusicClip>>,
 }
 
+/// App-level project facts the shell shows and saves: display name, canvas aspect id, chosen
+/// export preset id and keymap id. Free-form strings; the shell validates them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProjectInfo {
+    pub name: String,
+    pub aspect: String,
+    pub export_preset: String,
+    pub keymap: String,
+}
+
+impl Default for ProjectInfo {
+    fn default() -> Self {
+        ProjectInfo {
+            name: "Untitled project".into(),
+            aspect: "16:9".into(),
+            export_preset: "youtube-1080".into(),
+            keymap: "editelier".into(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Project {
+    #[serde(default)]
+    pub info: ProjectInfo,
     pub settings: Settings,
     pub media: Arc<Vec<MediaRef>>,
     pub timeline: Timeline,

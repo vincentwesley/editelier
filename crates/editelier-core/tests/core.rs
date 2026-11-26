@@ -537,3 +537,102 @@ fn project_load_rejects_future_and_broken_files() {
     let stale = to_json(s.project()).replace(&format!("\"next_id\": {}", id + 1), "\"next_id\": 1");
     assert!(from_json(&stale).unwrap().next_id > id);
 }
+
+#[test]
+fn split_title_and_music_rename_and_canvas() {
+    let mut s = session();
+    let t = s
+        .execute(&Command::AddTitle {
+            start: frames(10),
+            duration: frames(30),
+            text: "Hi".into(),
+            style: None,
+            position: None,
+        })
+        .unwrap()
+        .unwrap();
+    let r = s
+        .execute(&Command::SplitTitle {
+            id: t,
+            at: frames(25),
+        })
+        .unwrap()
+        .unwrap();
+    let titles = &s.project().timeline.titles;
+    assert_eq!(
+        (titles[0].start, titles[0].duration),
+        (frames(10), frames(15))
+    );
+    assert_eq!(
+        (titles[1].id, titles[1].start, titles[1].duration),
+        (r, frames(25), frames(15))
+    );
+    assert!(
+        s.execute(&Command::SplitTitle {
+            id: t,
+            at: frames(10)
+        })
+        .is_err()
+    );
+
+    let m = s
+        .execute(&Command::AddMusic {
+            media: 3,
+            start: frames(30),
+            source_in: frames(0),
+            source_out: frames(300),
+        })
+        .unwrap()
+        .unwrap();
+    s.execute(&Command::SetMusicGain {
+        id: m,
+        gain_db: -6.0,
+        fade_in: frames(20),
+        fade_out: frames(20),
+    })
+    .unwrap();
+    s.execute(&Command::SplitMusic {
+        id: m,
+        at: frames(130),
+    })
+    .unwrap();
+    let music = &s.project().timeline.music;
+    assert_eq!(
+        (music[0].source_out, music[0].fade_in, music[0].fade_out),
+        (frames(100), frames(20), Tick::ZERO)
+    );
+    assert_eq!(
+        (
+            music[1].start,
+            music[1].source_in,
+            music[1].fade_in,
+            music[1].fade_out
+        ),
+        (frames(130), frames(100), Tick::ZERO, frames(20))
+    );
+
+    s.execute(&Command::Rename {
+        name: "  Trip  ".into(),
+    })
+    .unwrap();
+    assert_eq!(s.project().info.name, "Trip");
+    assert!(s.execute(&Command::Rename { name: " ".into() }).is_err());
+    s.execute(&Command::SetCanvas {
+        aspect: "9:16".into(),
+        width: 1080,
+        height: 1920,
+    })
+    .unwrap();
+    assert_eq!(s.project().settings.width, 1080);
+    assert_eq!(s.project().info.aspect, "9:16");
+    assert!(
+        s.execute(&Command::SetCanvas {
+            aspect: "x".into(),
+            width: 1081,
+            height: 2
+        })
+        .is_err()
+    );
+    s.undo();
+    assert_eq!(s.project().settings.width, 1920);
+}
