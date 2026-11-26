@@ -13,6 +13,7 @@ The dev build from `scripts/fetch-ffmpeg.ps1` (BtbN `lgpl-shared`) is **dev only
 --disable-parser=h264,hevc,aac,aac_latm
 --disable-hwaccel=h264_d3d11va,h264_d3d11va2,h264_d3d12va,h264_dxva2,h264_nvdec,h264_vulkan,hevc_d3d11va,hevc_d3d11va2,hevc_d3d12va,hevc_dxva2,hevc_nvdec,hevc_vulkan
 --disable-ffplay
+--disable-network
 ```
 
   H.264/HEVC/AAC decode and encode go only through Media Foundation (D3). Check that `ffprobe` still reports H.264/HEVC/AAC streams from container metadata once the parsers are gone (`crates/editelier-media` probe tests); if probing regresses, keep the parsers and record the decision in `docs/DECISIONS.md`. Parsers are not codec implementations, but keeping them is a choice we make on purpose.

@@ -10,7 +10,7 @@ use editelier_media::{
 };
 use editelier_render::{GpuImage, Interop, Orient, Pixels, SourceColor, SourceFrame};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf, Prefix};
 use std::sync::{Arc, RwLock};
 use windows::Win32::Graphics::Direct3D11::ID3D11Device;
 
@@ -84,6 +84,48 @@ pub fn check_media_path(raw: &str) -> ApiResult<PathBuf> {
         ));
     }
     Ok(p)
+}
+
+/// A media path read from a project file (untrusted): local disk only. The shape is checked on
+/// the raw string before any filesystem call, because merely touching `\\host\x` (or WebDAV
+/// `\\host@SSL\x`) sends the user's NTLM hash and IP to that host. A canonical path that turns
+/// out to be a share (mapped network drive) is refused too.
+pub fn check_project_media_path(raw: &str) -> ApiResult<PathBuf> {
+    local_shape(raw)?;
+    let p = check_media_path(raw)?;
+    if matches!(p.components().next(), Some(Component::Prefix(x))
+        if matches!(x.kind(), Prefix::UNC(..) | Prefix::VerbatimUNC(..)))
+    {
+        return Err(not_local(raw));
+    }
+    Ok(p)
+}
+
+/// String-only check (no filesystem access): `C:\...` with a media extension.
+fn local_shape(raw: &str) -> ApiResult<()> {
+    let p = Path::new(raw);
+    let disk = matches!(p.components().next(), Some(Component::Prefix(x))
+        if matches!(x.kind(), Prefix::Disk(_)));
+    if raw.starts_with(r"\\")
+        || raw.starts_with("//")
+        || raw.len() > 4096
+        || raw.contains('\0')
+        || !p.is_absolute()
+        || !disk
+    {
+        return Err(not_local(raw));
+    }
+    if !MEDIA_EXTS.contains(&ext(p).as_str()) {
+        return Err(ApiError::new(
+            "unsupported_codec",
+            format!("{raw}: Editelier can't open this kind of file."),
+        ));
+    }
+    Ok(())
+}
+
+fn not_local(raw: &str) -> ApiError {
+    ApiError::new("media_offline", format!("{raw} isn't on this PC's drives."))
 }
 
 fn frame_rate(v: &VideoStream) -> Option<FrameRate> {
@@ -646,5 +688,35 @@ mod tests {
             check_media_path(exe.to_str().unwrap()).unwrap_err().code,
             "unsupported_codec"
         );
+    }
+
+    #[test]
+    fn project_media_paths_are_local_only() {
+        let dir = std::env::temp_dir().join("editelier-local-path-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let ok = dir.join("a.mp4");
+        std::fs::write(&ok, b"x").unwrap();
+        let ok = plain_str(&ok);
+        for bad in [
+            r"\\host\share\a.mp4",
+            r"\\?\UNC\host\share\a.mp4",
+            r"\\host@SSL\x\a.mp4",
+            r"\\host@80\x\a.mp4",
+            "//host/x.mp4",
+            r"media\a.mp4",
+            r"\a.mp4",
+        ] {
+            // String-only rejection: no filesystem call ever reaches the host.
+            assert_eq!(local_shape(bad).unwrap_err().code, "media_offline", "{bad}");
+            assert!(check_project_media_path(bad).is_err(), "{bad}");
+        }
+        assert!(local_shape(r"C:\x\a.exe").is_err());
+        assert!(check_project_media_path(&ok).is_ok(), "{ok}");
+    }
+
+    fn plain_str(p: &Path) -> String {
+        crate::commands::plain(std::fs::canonicalize(p).unwrap())
+            .display()
+            .to_string()
     }
 }

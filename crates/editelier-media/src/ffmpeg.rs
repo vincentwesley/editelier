@@ -63,10 +63,14 @@ impl Tools {
     }
 }
 
+/// Input option for every helper run: local files only, so a crafted HLS/concat/playlist file
+/// can't make FFmpeg fetch anything over the network.
+const LOCAL_ONLY: [&str; 2] = ["-protocol_whitelist", "file"];
+
 /// Runs a tool without a console window and returns stdout.
 fn run(exe: &Path, args: &[&std::ffi::OsStr]) -> Result<Vec<u8>> {
     let mut cmd = Command::new(exe);
-    cmd.args(args).stdin(Stdio::null());
+    cmd.args(LOCAL_ONLY).args(args).stdin(Stdio::null());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -395,7 +399,8 @@ pub fn stream_audio(
     let map = format!("0:{}", a.index);
     let mut cmd = Command::new(&tools.ffmpeg);
     // -copyts keeps the file's timeline; aresample pads/trims so output starts at t = 0.
-    cmd.args(["-v", "error", "-copyts", "-i"])
+    cmd.args(LOCAL_ONLY)
+        .args(["-v", "error", "-copyts", "-i"])
         .arg(path)
         .args(["-map", &map, "-af", "aresample=48000:async=1:first_pts=0"])
         .args(["-f", "f32le", "-"])

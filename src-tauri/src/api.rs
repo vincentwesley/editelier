@@ -128,6 +128,8 @@ struct MediaOut {
     probe: Probe,
     proxy: ProxyState,
     thumbnail: Option<String>,
+    /// Missing, unreadable or not on a local drive: shown as offline, nothing renders.
+    offline: bool,
 }
 
 #[derive(Serialize)]
@@ -284,6 +286,7 @@ pub fn snapshot(
                 },
                 proxy: e.map_or(ProxyState::None, |e| (&e.proxy).into()),
                 thumbnail: e.and_then(|e| e.thumb.as_deref()).map(asset_url),
+                offline: e.is_none(),
             }
         })
         .collect();
