@@ -12,4 +12,4 @@ cargo build -p editelier --features agent,custom-protocol   # debug only; releas
 cd e2e-app && npm ci --ignore-scripts && npm test
 ```
 
-The suite sets `EDITELIER_AGENT=1`, `EDITELIER_AUDIO=null` (no sound) and `EDITELIER_TEST_OFFSCREEN=1`. Media and the export go to `%TEMP%\editelier-e2e*`. `agent.mjs` is the pipe client (`%TEMP%\editelier-agent.json` holds the pipe name and token while the app runs).
+The suite sets `EDITELIER_AGENT=1`, `EDITELIER_AUDIO=null` (no sound) and `EDITELIER_TEST_OFFSCREEN=1`. Native pickers are never opened (they would show a window): media comes in through the agent's `import_media` (the shell's drop path) and the export through `export_start`. Media and the export go to `%TEMP%\editelier-e2e*`. `tauri-driver`/`msedgedriver` can outlive the run; stop them by PID. `agent.mjs` is the pipe client (`%TEMP%\editelier-agent.json` holds the pipe name and token while the app runs).

@@ -277,7 +277,7 @@ export function createMock({ tick = 120 }: MockOptions = {}): Backend {
   const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     project_new(a) {
       const asp = (a.aspect as AspectId) in ASPECTS ? (a.aspect as AspectId) : "16:9";
-      const preset = (a.export_preset as PresetId) in PRESETS ? (a.export_preset as PresetId) : ASPECTS[asp].preset;
+      const preset = (a.exportPreset as PresetId) in PRESETS ? (a.exportPreset as PresetId) : ASPECTS[asp].preset;
       project = {
         id: id("p"),
         name: String(a.name || "Untitled project").slice(0, 120),

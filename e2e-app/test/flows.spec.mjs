@@ -1,5 +1,5 @@
 // A-UI flows in the real app. Native pickers can't be driven: media comes in through the agent's
-// import_media (the shell's own drop path), and the export folder picker is answered in-page.
+// import_media (the shell's own drop path) and the export runs through the agent.
 import AxeBuilder from "@axe-core/webdriverio";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, statSync } from "node:fs";
@@ -57,6 +57,8 @@ describe("Editelier real app", () => {
 
   it("A-UI-01: welcome -> YouTube video -> editor (axe both themes)", async () => {
     await expect($("#welcome")).toBeDisplayed();
+    // Off-screen: never pops up on the owner's desktop.
+    expect(await browser.execute(() => window.screenX)).toBeLessThan(-10_000);
     // rAF and painting still run off-screen (occlusion off): a frame callback must land.
     expect(await browser.executeAsync((done) => requestAnimationFrame(() => done(document.visibilityState)))).toBe("visible");
     await bothThemes("welcome");
@@ -128,19 +130,16 @@ describe("Editelier real app", () => {
     await $('button[data-action="export"]').click();
     await expect($("#export-dialog")).toBeDisplayed();
     await axe("export");
-    // Answer the native folder picker in-page.
-    await browser.execute((dir) => {
-      const t = window.__TAURI_INTERNALS__;
-      const orig = t.invoke.bind(t);
-      t.invoke = (cmd, args, opts) => (cmd === "dialog_pick_folder" ? Promise.resolve(dir) : orig(cmd, args, opts));
-    }, OUT);
-    await $("#export-pick").click();
-    await expect($("#export-folder")).toHaveText(OUT);
+    await browser.keys("Escape");
+    // The folder field only takes the native picker (never opened here: it would show a window),
+    // so the export itself starts through the agent with the same preset and path checks.
     const name = `e2e-${Date.now()}`;
-    await $("#export-name").setValue(name);
-    await $("#export-go").click();
-    await until(async () => (await $("#export-go").getText()) === "Done", "export done", 300_000);
-    const file = join(OUT, `${name}.mp4`);
+    const { job } = await agent.call("export_start", { preset: "youtube-1080", path: join(OUT, `${name}.mp4`) });
+    let st;
+    await until(async () => ["done", "failed"].includes((st = await agent.call("export_status", { job })).state), "export done", 300_000);
+    expect(st.error ?? null).toBe(null);
+    expect(st.state).toBe("done");
+    const file = st.path;
     expect(existsSync(file) && statSync(file).size > 10_000).toBe(true);
     const r = spawnSync("ffprobe", ["-v", "error", "-show_entries", "stream=codec_type,codec_name,width,height:format=duration", "-of", "json", file], { encoding: "utf8" });
     const info = JSON.parse(r.stdout);
@@ -149,7 +148,6 @@ describe("Editelier real app", () => {
     expect(info.streams.some((s) => s.codec_type === "audio" && s.codec_name === "aac")).toBe(true);
     // 3 clips of 3 s; the split keeps the length.
     expect(Math.abs(Number(info.format.duration) - 9)).toBeLessThan(0.2);
-    await $("#export-go").click();
   });
 
   it("agent screenshot lands only in temp", async () => {

@@ -50,8 +50,9 @@ export const runCommand = <K extends CommandName>(name: K, args: CommandMap[K]) 
 export const undo = () => runCommand("history.undo", {});
 export const redo = () => runCommand("history.redo", {});
 
-export const projectNew = (a: { name: string; aspect: AspectId; export_preset: PresetId; keymap: KeymapId }) =>
-  backend.invoke<Snapshot>("project_new", a);
+// Tauri command arguments are camelCase on the wire (`export_preset` -> `exportPreset`).
+export const projectNew = ({ export_preset, ...a }: { name: string; aspect: AspectId; export_preset: PresetId; keymap: KeymapId }) =>
+  backend.invoke<Snapshot>("project_new", { ...a, exportPreset: export_preset });
 export const projectOpen = (path: string) => backend.invoke<Snapshot>("project_open", { path });
 export const projectSave = (path?: string) => backend.invoke<Snapshot>("project_save", { path: path ?? null });
 export const recentProjects = () => backend.invoke<RecentProject[]>("recent_projects");

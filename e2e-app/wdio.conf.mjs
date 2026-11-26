@@ -29,7 +29,7 @@ function makeMedia() {
     const r = spawnSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", ...args], { stdio: "inherit" });
     if (r.status !== 0) throw new Error(`ffmpeg failed: ${args.join(" ")}`);
   };
-  const clip = (src, name) => ff(["-f", "lavfi", "-i", `${src}:size=1280x720:rate=30:duration=3`, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-g", "30", join(MEDIA, name)]);
+  const clip = (src, name) => ff(["-f", "lavfi", "-i", `${src}${src.includes("=") ? ":" : "="}size=1280x720:rate=30:duration=3`, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-g", "30", join(MEDIA, name)]);
   clip("testsrc2", "a.mp4");
   clip("smptebars", "b.mp4");
   clip("color=c=0x2060c0", "c.mp4");
@@ -45,7 +45,7 @@ export const config = {
   mochaOpts: { ui: "bdd", timeout: 600_000 },
   reporters: ["spec"],
   waitforTimeout: 20_000,
-  services: [["@wdio/tauri-service", { driverProvider: "official", appBinaryPath: app, autoDownloadEdgeDriver: true }]],
+  services: [["@wdio/tauri-service", { driverProvider: "external", appBinaryPath: app, autoDownloadEdgeDriver: true }]],
   capabilities: [{ browserName: "tauri", "tauri:options": { application: app } }],
   onPrepare() {
     rmSync(INFO, { force: true });
