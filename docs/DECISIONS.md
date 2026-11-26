@@ -114,3 +114,6 @@ Owner-approved 2026-11-25. Each entry: decision, why, research link. Research fi
 - **Photos** use the identical pipeline and looks.
 - **Why:** the owner's end goal is graded edits; one-tap looks differentiate a free editor where multitrack does not; where the grade sits is a pipeline decision that is cheap now and expensive to retrofit after more golden frames exist.
 - **Research:** R06 §4, §5, §6 and summary items 8–11; R03 (looks-first UX); R05 §A3.
+
+## D21 Photo scope: shared pipeline, not a second app (owner, 2026-11-26)
+Photos are one-frame clips through the same grade pipeline (D20): import, Looks + grade, light/colour, crop/straighten, text, copy grade to many, carousel export, photos on the timeline. Not planned: spot healing/retouch, masks/layers, a photo library. Reason: the colour goal transfers to stills almost for free and carousel + reel from one project is a differentiator; a full photo editor would dilute video and colour quality. RAW develop stays (M9) because RAW gives the most grading room. Plan: `docs/PLAN.md` M4.

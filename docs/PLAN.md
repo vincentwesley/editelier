@@ -55,7 +55,7 @@ Scope: multiple video/audio tracks with magnetic main track + free tracks; audio
 Exit: A-CUT-08..09, A-QUAL-06 (broadcast preset too), A-UI-07, plus earlier ids still green.
 
 ## M4: Photos and mixed projects
-Scope: photo editing with the M2 Looks (same pipeline and panel) plus light/colour/detail/crop sliders, before/after, copy edits to many; mixed photo + clip projects; carousel mode (4:5 slides, seamless panorama split, numbered 1080-wide export) and reel from the same project; HEIC via WIC (D11).
+Scope (owner, 2026-11-26, D21): photos share the video pipeline; no separate photo app. In: import stills (JPEG/PNG/HEIC via WIC, D11), the M2 Looks + grade panel, light/colour sliders, crop/straighten, text, before/after, copy grade to many; photos as timeline clips with slow pan/zoom; mixed photo + clip projects; carousel mode (4:5 slides, seamless panorama split, numbered 1080-wide JPEG/PNG export) and reel from the same project. Out (not planned): spot healing/retouch, masks/layers, photo library/catalogue. RAW stays M9 because it serves the colour goal.
 Exit: A-IMPORT-04 (stills), A-QUAL-08 (carousel slice exactness), A-UI-08, A-COL-02 on photo fixtures.
 
 ## M5: Pro colour
