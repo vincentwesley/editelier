@@ -262,9 +262,37 @@ impl Engine {
         }
     }
 
-    /// Audio output on the default device (48 kHz stereo f32; WASAPI converts). Returns when the
-    /// engine stops. Without a device playback runs on the timer clock.
-    pub fn audio_loop(self: Arc<Self>) {
+    /// Silent sink with the device's timing: mixes 10 ms blocks at real-time pace into a scratch
+    /// buffer and drops them, so the audio clock and mix cost stay realistic with no sound.
+    fn null_sink(&self) {
+        self.audio_live.store(true, Ordering::Relaxed);
+        let mut buf = vec![0f32; (mix::RATE as usize / 100) * 2];
+        let start = Instant::now();
+        let mut blocks = 0u64;
+        while !self.stopped() {
+            if self.audio_running.load(Ordering::Relaxed) {
+                let at = self.audio_cursor.load(Ordering::Relaxed);
+                if let (Ok(p), Ok(lib)) = (self.project.try_read(), self.lib.try_read()) {
+                    mix::mix(&p, &lib, at, &mut buf);
+                }
+                self.audio_cursor
+                    .fetch_add((buf.len() / 2) as i64, Ordering::Relaxed);
+            }
+            blocks += 1;
+            let due = start + Duration::from_millis(10 * blocks);
+            std::thread::sleep(due.saturating_duration_since(Instant::now()));
+        }
+        self.audio_live.store(false, Ordering::Relaxed);
+    }
+
+    /// Audio output on the default device (48 kHz stereo f32; WASAPI converts), or the silent
+    /// [`null_sink`](Self::null_sink) when `null` (tests, `--measure`, `EDITELIER_AUDIO=null`).
+    /// Returns when the engine stops. Without a device playback runs on the timer clock.
+    pub fn audio_loop(self: Arc<Self>, null: bool) {
+        if null {
+            eprintln!("audio: null sink (silent)");
+            return self.null_sink();
+        }
         use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
         let host = cpal::default_host();
         let Some(device) = host.default_output_device() else {

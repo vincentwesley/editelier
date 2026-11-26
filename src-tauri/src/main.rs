@@ -21,11 +21,16 @@ pub struct AppState {
     /// Frames drained from the render thread every 100 ms; `measure` swaps it per phase.
     pub acc: Arc<Mutex<preview::Window>>,
     pub key_seen: std::sync::atomic::AtomicBool,
+    /// `--measure` places the viewer itself; UI rect reports are ignored then.
+    pub pin_rect: std::sync::atomic::AtomicBool,
     pub core: Arc<Core>,
 }
 
 #[tauri::command]
 fn preview_set_rect(state: tauri::State<'_, AppState>, rect: Rect) {
+    if state.pin_rect.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     if let Some(p) = state.preview.lock().unwrap().as_ref() {
         p.set_rect(rect);
     }
@@ -51,6 +56,8 @@ struct UiStats {
 
 fn main() {
     let measure = std::env::args().any(|a| a == "--measure");
+    // Never make sound in benches or automated runs: the audio clock runs on a silent sink.
+    let null_audio = measure || std::env::var("EDITELIER_AUDIO").is_ok_and(|v| v == "null");
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -89,6 +96,7 @@ fn main() {
                 preview: Mutex::new(None),
                 acc: Arc::new(Mutex::new(preview::Window::default())),
                 key_seen: false.into(),
+                pin_rect: measure.into(),
                 core: core.clone(),
             });
             if let Some(tools) = core.tools.clone() {
@@ -100,7 +108,7 @@ fn main() {
             let e = core.engine.clone();
             std::thread::Builder::new()
                 .name("audio-out".into())
-                .spawn(move || e.audio_loop())?;
+                .spawn(move || e.audio_loop(null_audio))?;
             commands::tick_loop(app.handle().clone(), core.clone());
 
             let win = app.get_webview_window("main").expect("main window");

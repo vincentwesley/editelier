@@ -43,6 +43,10 @@ Static TTF instances (converted from the house kit's WOFF2 variable fonts with f
 
 All permissive: `wgpu` 30 and its `wgpu-*`/`naga` crates (MIT OR Apache-2.0), `cosmic-text` 0.19, `fontdb`, `swash`, `skrifa`/`read-fonts`, `harfrust`, `unicode-*` (MIT OR Apache-2.0; `unicode-linebreak` Apache-2.0), `slotmap`, `foldhash` (Zlib), `libloading` (ISC), `codespan-reporting` (Apache-2.0), `self_cell` (Apache-2.0 OR GPL-2.0-only; taken under Apache-2.0). Full list: `cargo tree -p editelier-render -e normal -f "{p} {l}"`.
 
+## Rust crates (`src-tauri`, the app)
+
+Beyond the crates above and Tauri's own (listed in `docs/spikes/preview-surface.md`): `cpal` 0.18 (Apache-2.0) with `dasp_*` (MIT OR Apache-2.0) for audio output, `tauri-plugin-dialog` 2.8 (Apache-2.0 OR MIT) with `rfd` (MIT) for file pickers, `ebur128` (MIT, via `editelier-export`). Full list: `cargo tree -p editelier -e normal -f "{p} {l}"`.
+
 ## FFmpeg (not in the repo yet)
 
 Dev builds run `ffprobe.exe`/`ffmpeg.exe` from a BtbN `lgpl-shared` build that `scripts/fetch-ffmpeg.ps1` fetches into gitignored `third_party/ffmpeg/` (LGPL-2.1-or-later). Shipped builds will use our own LGPL build with the software H.264/HEVC/AAC codecs disabled (D3). Its notice, licence text and source link go here when it lands.
