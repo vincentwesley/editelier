@@ -4,7 +4,7 @@ The dev build from `scripts/fetch-ffmpeg.ps1` (BtbN `lgpl-shared`) is **dev only
 
 ## Recipe
 - Base: [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) at a pinned commit, target `win64`, variant `lgpl-shared`, FFmpeg `8.1` (same branch as the dev pin). Needs Docker on Linux or WSL2. MSYS2 or a plain mingw-w64 cross build is the fallback if Docker isn't available; use the same configure line.
-- Licence: BtbN's `lgpl` variant passes `--enable-version3` (its `LICENSE.txt` is LGPLv3). For LGPLv2.1 like the About box text (D13), drop `--enable-version3` and any library that needs it. If a v3-only library is kept, ship LGPLv3 and update the About text and `THIRD_PARTY_NOTICES.md` to match.
+- Licence: **decided: LGPLv2.1** (no `--enable-version3`, no v3-only libraries). LGPLv3 adds installation-information duties that fit poorly with a Store-signed MSIX. BtbN dev builds are LGPLv3 and are dev-only.
 - Flags appended to BtbN's configure line:
 
 ```
