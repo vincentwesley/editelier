@@ -50,3 +50,51 @@ Make 'still_alpha.png' @('-f', 'lavfi', '-i', 'testsrc2=size=640x480,format=rgba
 Make 'still.jpg' @('-f', 'lavfi', '-i', 'testsrc2=size=800x600', '-frames:v', '1', '-q:v', '3')
 Make 'tone_48k.wav' @('-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=3', '-ac', '2', '-c:a', 'pcm_s16le')
 Make 'tone_44k.mp3' @('-f', 'lavfi', '-i', 'sine=frequency=1000:sample_rate=44100:duration=3', '-c:a', 'libmp3lame', '-b:a', '128k')
+
+# Orientation: asymmetric corner marker (red top-left, lime top-right, blue bottom-left, black bottom-right)
+$mark = "drawbox=x=0:y=0:w=iw/4:h=ih/4:c=red:t=fill,drawbox=x=iw*3/4:y=0:w=iw/4:h=ih/4:c=lime:t=fill,drawbox=x=0:y=ih*3/4:w=iw/4:h=ih/4:c=blue:t=fill"
+Make 'marker_360p_h264_aac.mp4' (@('-f', 'lavfi', '-i', "color=c=gray:s=640x360:r=30:d=2,$mark,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv") + $tone +
+  @('-t', '2') + $x264 + @('-g', '30') + $aac)
+# Phone-style portrait clip: landscape-coded, display matrix says rotate 90 degrees clockwise (ffprobe rotation -90)
+Make 'phone_rot90cw_h264.mp4' (@('-display_rotation', '-90', '-i', (Join-Path $out 'marker_360p_h264_aac.mp4'), '-c', 'copy'))
+# A/V offset: audio starts 250 ms after video (empty edit) + AAC encoder priming (1024-sample edit),
+# video has B-frames (composition edit). The 1 kHz burst sits at exactly 1.000 s after the first frame.
+Make 'av_offset_h264_aac.mp4' (@('-f', 'lavfi', '-i', "testsrc2=size=640x360:rate=30:duration=3,$sdr",
+  '-itsoffset', '0.25', '-f', 'lavfi', '-i', "aevalsrc='if(gte(t,0.75),0.5*sin(2*PI*1000*(t-0.75)),0)':s=48000:d=2.5:c=stereo") +
+  @('-map', '0:v', '-map', '1:a') + $x264 + @('-g', '30', '-bf', '2') + $aac)
+# Loud, peaky "music": quiet bed + full-scale transients at 44.1 kHz (needs gain AND a true-peak limiter at -14 LUFS)
+Make 'loud_peaky_44k.wav' @('-f', 'lavfi', '-i', "aevalsrc='0.08*sin(2*PI*220*t)+0.95*exp(-200*mod(t\,0.5))*sin(2*PI*3000*t)':s=44100:d=10:c=stereo", '-c:a', 'pcm_s16le')
+
+# EXIF orientation 1..8: same stored pixels, only the tag differs (APP1 Exif spliced in after SOI).
+function Exif-Tiff([int]$o) {
+  # Big-endian TIFF, one IFD entry: 0x0112 Orientation, SHORT, count 1
+  [byte[]](0x4D,0x4D,0x00,0x2A,0,0,0,8, 0,1, 0x01,0x12,0,3,0,0,0,1,0,$o,0,0, 0,0,0,0)
+}
+Make 'orient_base.jpg' @('-f', 'lavfi', '-i', "color=c=gray:s=320x240,$mark", '-frames:v', '1', '-q:v', '2')
+$base = [IO.File]::ReadAllBytes((Join-Path $out 'orient_base.jpg'))
+foreach ($o in 1..8) {
+  $dst = Join-Path $out "orient_$o.jpg"
+  if ((Test-Path $dst) -and -not $Force) { continue }
+  $payload = [byte[]](0x45,0x78,0x69,0x66,0,0) + (Exif-Tiff $o)
+  $len = $payload.Length + 2
+  $app1 = [byte[]](0xFF,0xE1,[byte]($len -shr 8),[byte]($len -band 255)) + $payload
+  [IO.File]::WriteAllBytes($dst, [byte[]]($base[0..1] + $app1 + $base[2..($base.Length - 1)]))
+  Write-Host "made orient_$o.jpg"
+}
+# PNG with an eXIf chunk (orientation 6), inserted after IHDR
+function Crc32([byte[]]$b) {
+  $c = [uint32]::MaxValue
+  foreach ($x in $b) { $c = $c -bxor $x; for ($k = 0; $k -lt 8; $k++) { if ($c -band 1) { $c = ($c -shr 1) -bxor [uint32]3988292384 } else { $c = $c -shr 1 } } }
+  $c -bxor [uint32]::MaxValue
+}
+Make 'orient_base.png' @('-f', 'lavfi', '-i', "color=c=gray:s=320x240,$mark", '-frames:v', '1')
+$dst = Join-Path $out 'orient_6.png'
+if (-not (Test-Path $dst) -or $Force) {
+  $png = [IO.File]::ReadAllBytes((Join-Path $out 'orient_base.png'))
+  $data = Exif-Tiff 6
+  $body = [byte[]](0x65,0x58,0x49,0x66) + $data
+  $crc = [uint32](Crc32 $body)
+  $chunk = [byte[]](0,0,0,$data.Length) + $body + [byte[]]@((($crc -shr 24) -band 255), (($crc -shr 16) -band 255), (($crc -shr 8) -band 255), ($crc -band 255))
+  [IO.File]::WriteAllBytes($dst, [byte[]]($png[0..32] + $chunk + $png[33..($png.Length - 1)]))
+  Write-Host 'made orient_6.png'
+}

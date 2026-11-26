@@ -6,8 +6,8 @@
 //! need in-process demux -> MF handoff or per-frame calls.
 
 use crate::{
-    AudioBuffer, AudioStream, ColorInfo, Error, Frame, FrameData, Hdr, ImageInfo, Index, MICROS,
-    MediaKind, PixelFormat, ProbeInfo, Rational, Result, VideoStream, detect_vfr,
+    AudioStream, ColorInfo, Error, Frame, FrameData, Hdr, ImageInfo, Index, MICROS, MediaKind,
+    PixelFormat, ProbeInfo, Rational, Result, VideoStream, detect_vfr,
 };
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -110,7 +110,11 @@ fn rotation(stream: &Value) -> u16 {
         .get("side_data_list")
         .and_then(Value::as_array)
         .and_then(|l| l.iter().find_map(|s| num_of(s, "rotation")));
-    let tag = stream.get("tags").and_then(|t| num_of(t, "rotate"));
+    // The legacy `rotate` tag is clockwise; the display matrix rotation is counter-clockwise.
+    let tag = stream
+        .get("tags")
+        .and_then(|t| num_of(t, "rotate"))
+        .map(|d| -d);
     let deg = side.or(tag).unwrap_or(0.0).round() as i64;
     (((deg % 360) + 360) % 360) as u16
 }
@@ -176,6 +180,7 @@ pub fn probe(tools: &Tools, path: &Path) -> Result<ProbeInfo> {
                 channels: s["channels"].as_u64().unwrap_or(0) as u32,
                 channel_layout: str_of(s, "channel_layout"),
                 duration_us: micros(s),
+                start_us: num_of(s, "start_time").map(|t| (t * 1e6).round() as i64),
             }),
             _ => {}
         }
@@ -376,24 +381,63 @@ pub fn frame_at(
     })
 }
 
-/// Decodes a whole audio stream to f32 48 kHz interleaved (royalty-free codecs only).
-pub fn decode_audio(tools: &Tools, path: &Path, a: &AudioStream) -> Result<AudioBuffer> {
+/// Streams an audio stream as f32 48 kHz interleaved chunks to `sink(channels, samples)`
+/// (royalty-free codecs only). Sample 0 is presentation time 0 of the file: edit lists and
+/// priming are honoured, a late start is padded with silence and anything before 0 is dropped.
+pub fn stream_audio(
+    tools: &Tools,
+    path: &Path,
+    a: &AudioStream,
+    sink: &mut dyn FnMut(u32, &[f32]) -> Result<()>,
+) -> Result<()> {
+    use std::io::Read;
     check_royalty_free(&a.codec)?;
     let map = format!("0:{}", a.index);
-    let out = run(
-        &tools.ffmpeg,
-        &[
-            &os_args!["-v", "error", "-i"][..],
-            &[path.as_os_str()],
-            os_args!["-map", &map, "-f", "f32le", "-ar", "48000", "-"],
-        ]
-        .concat(),
-    )?;
-    Ok(AudioBuffer {
-        sample_rate: crate::SAMPLE_RATE,
-        channels: a.channels.max(1),
-        samples: crate::f32_le(&out),
-    })
+    let mut cmd = Command::new(&tools.ffmpeg);
+    // -copyts keeps the file's timeline; aresample pads/trims so output starts at t = 0.
+    cmd.args(["-v", "error", "-copyts", "-i"])
+        .arg(path)
+        .args(["-map", &map, "-af", "aresample=48000:async=1:first_pts=0"])
+        .args(["-f", "f32le", "-"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| Error::Tool(format!("could not run {}: {e}", tools.ffmpeg.display())))?;
+    let mut out = child.stdout.take().expect("piped");
+    let ch = a.channels.max(1);
+    let mut buf = vec![0u8; 1 << 16];
+    let mut fill = 0;
+    let res = loop {
+        match out.read(&mut buf[fill..]) {
+            Ok(0) => break Ok(()),
+            Ok(n) => {
+                fill += n;
+                let whole = fill / (4 * ch as usize) * (4 * ch as usize);
+                if let Err(e) = sink(ch, &crate::f32_le(&buf[..whole])) {
+                    break Err(e);
+                }
+                buf.copy_within(whole..fill, 0);
+                fill -= whole;
+            }
+            Err(e) => break Err(e.into()),
+        }
+    };
+    if res.is_err() {
+        let _ = child.kill();
+    }
+    let status = child.wait()?;
+    res?;
+    if !status.success() {
+        return Err(Error::Unsupported("this audio couldn't be decoded".into()));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

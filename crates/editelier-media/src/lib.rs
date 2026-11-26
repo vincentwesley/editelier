@@ -136,6 +136,28 @@ pub struct VideoStream {
     pub duration_us: Option<i64>,
 }
 
+impl VideoStream {
+    /// Picture size as shown: coded size with width and height swapped for 90/270 rotation.
+    pub fn display_size(&self) -> (u32, u32) {
+        if self.rotation % 180 == 90 {
+            (self.height, self.width)
+        } else {
+            (self.width, self.height)
+        }
+    }
+
+    /// The rotation as an EXIF orientation code (1, 3, 6 or 8): how to turn decoded frames for
+    /// display. 90 CCW = 270 CW = 8; 270 CCW = 90 CW = 6.
+    pub fn orientation(&self) -> u16 {
+        match self.rotation {
+            90 => 8,
+            180 => 3,
+            270 => 6,
+            _ => 1,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct AudioStream {
     pub index: u32,
@@ -144,10 +166,14 @@ pub struct AudioStream {
     pub channels: u32,
     pub channel_layout: Option<String>,
     pub duration_us: Option<i64>,
+    /// Presentation time of the first decoded sample (first packet PTS after edit lists, so it
+    /// includes encoder priming and any start delay), in microseconds.
+    pub start_us: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImageInfo {
+    /// Display size (EXIF orientation applied, as [`win::wic::decode_image`] returns it).
     pub width: u32,
     pub height: u32,
     /// EXIF orientation 1..=8 (1 = as stored).
@@ -378,34 +404,130 @@ pub(crate) fn f32_le(bytes: &[u8]) -> Vec<f32> {
 /// Output sample rate for all decoded audio.
 pub const SAMPLE_RATE: u32 = 48_000;
 
-/// Resamples interleaved audio to 48 kHz (rubato FFT resampler; no-op if already 48 kHz).
+/// Resamples interleaved audio to 48 kHz (no-op if already 48 kHz).
 pub fn resample_to_48k(input: AudioBuffer) -> Result<AudioBuffer> {
-    use rubato::audioadapter_buffers::direct::InterleavedSlice;
-    use rubato::{Fft, FixedSync, Resampler};
-    if input.sample_rate == SAMPLE_RATE || input.samples.is_empty() {
-        return Ok(AudioBuffer {
-            sample_rate: SAMPLE_RATE,
-            ..input
-        });
-    }
-    let ch = input.channels as usize;
-    let frames = input.samples.len() / ch;
-    let err = |e: &dyn fmt::Display| Error::Codec(format!("resample failed: {e}"));
-    let mut r = Fft::<f32>::new(
-        input.sample_rate as usize,
-        SAMPLE_RATE as usize,
-        1024,
-        ch,
-        FixedSync::Both,
-    )
-    .map_err(|e| err(&e))?;
-    let src = InterleavedSlice::new(&input.samples, ch, frames).map_err(|e| err(&e))?;
-    let out = r.process_all(&src, frames, None).map_err(|e| err(&e))?;
+    let mut samples = Vec::new();
+    let mut r = To48k::new(input.sample_rate, input.channels)?;
+    let mut sink = |s: &[f32]| {
+        samples.extend_from_slice(s);
+        Ok(())
+    };
+    r.push(&input.samples, &mut sink)?;
+    r.finish(&mut sink)?;
     Ok(AudioBuffer {
         sample_rate: SAMPLE_RATE,
         channels: input.channels,
-        samples: out.take_data(),
+        samples,
     })
+}
+
+/// Streaming resampler to 48 kHz (rubato FFT), delay-compensated: output frame k is at input time
+/// k / 48000, and the output has `round(input frames * ratio)` frames once finished.
+pub struct To48k {
+    r: Option<rubato::Fft<f32>>,
+    ch: usize,
+    pending: Vec<f32>,
+    out: Vec<f32>,
+    trim: usize,
+    frames_in: u64,
+    frames_out: u64,
+    rate: u32,
+}
+
+impl To48k {
+    pub fn new(rate: u32, channels: u32) -> Result<Self> {
+        use rubato::{Fft, FixedSync, Resampler};
+        let ch = channels.max(1) as usize;
+        let r = if rate == SAMPLE_RATE || rate == 0 {
+            None
+        } else {
+            Some(
+                Fft::<f32>::new(
+                    rate as usize,
+                    SAMPLE_RATE as usize,
+                    1024,
+                    ch,
+                    FixedSync::Input,
+                )
+                .map_err(|e| Error::Codec(format!("resample failed: {e}")))?,
+            )
+        };
+        let (trim, out) = r
+            .as_ref()
+            .map_or((0, 0), |r| (r.output_delay(), r.output_frames_max() * ch));
+        Ok(Self {
+            r,
+            ch,
+            pending: Vec::new(),
+            out: vec![0.0; out],
+            trim,
+            frames_in: 0,
+            frames_out: 0,
+            rate,
+        })
+    }
+
+    fn want(&self) -> u64 {
+        (self.frames_in as u128 * SAMPLE_RATE as u128 / self.rate.max(1) as u128) as u64
+    }
+
+    /// Runs one resampler chunk over `pending` (zero-padded when `partial`) and emits the output.
+    fn step(&mut self, partial: bool, sink: &mut dyn FnMut(&[f32]) -> Result<()>) -> Result<()> {
+        use rubato::Resampler;
+        use rubato::audioadapter_buffers::direct::InterleavedSlice;
+        let err = |e: &dyn fmt::Display| Error::Codec(format!("resample failed: {e}"));
+        let r = self.r.as_mut().expect("resampling");
+        let need = r.input_frames_next();
+        let have = (self.pending.len() / self.ch).min(need);
+        let mut chunk = self.pending[..have * self.ch].to_vec();
+        chunk.resize(need * self.ch, 0.0);
+        let src = InterleavedSlice::new(&chunk, self.ch, need).map_err(|e| err(&e))?;
+        let frames = self.out.len() / self.ch;
+        let mut dst =
+            InterleavedSlice::new_mut(&mut self.out, self.ch, frames).map_err(|e| err(&e))?;
+        let (_, produced) = r
+            .process_into_buffer(&src, &mut dst, None)
+            .map_err(|e| err(&e))?;
+        self.pending.drain(..have * self.ch);
+        let skip = self.trim.min(produced);
+        self.trim -= skip;
+        let mut n = (produced - skip) as u64;
+        if partial {
+            n = n.min(self.want().saturating_sub(self.frames_out));
+        }
+        self.frames_out += n;
+        sink(&self.out[skip * self.ch..(skip + n as usize) * self.ch])
+    }
+
+    /// Feeds interleaved input at the source rate; resampled output goes to `sink`.
+    pub fn push(
+        &mut self,
+        input: &[f32],
+        sink: &mut dyn FnMut(&[f32]) -> Result<()>,
+    ) -> Result<()> {
+        self.frames_in += (input.len() / self.ch) as u64;
+        let Some(r) = &self.r else {
+            return sink(input);
+        };
+        use rubato::Resampler;
+        let need = r.input_frames_next() * self.ch;
+        self.pending.extend_from_slice(input);
+        while self.pending.len() >= need {
+            self.step(false, sink)?;
+        }
+        Ok(())
+    }
+
+    /// Flushes the resampler's tail.
+    pub fn finish(mut self, sink: &mut dyn FnMut(&[f32]) -> Result<()>) -> Result<()> {
+        if self.r.is_none() {
+            return Ok(());
+        }
+        while self.frames_out < self.want() {
+            self.step(true, sink)?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -457,5 +579,27 @@ mod tests {
         assert!(ix.keyframe_between(4, 5));
         assert!(!ix.keyframe_between(5, 9));
         assert_eq!(ix.pts_at_micros(100_000), 3);
+    }
+
+    #[test]
+    fn streaming_resample_keeps_time() {
+        // A click at 0.5 s of 44.1 kHz input lands at 0.5 s of the 48 kHz output.
+        let mut input = vec![0.0f32; 44_100];
+        input[22_050] = 1.0;
+        let mut out = Vec::new();
+        let mut r = To48k::new(44_100, 1).unwrap();
+        let mut sink = |s: &[f32]| {
+            out.extend_from_slice(s);
+            Ok(())
+        };
+        for c in input.chunks(777) {
+            r.push(c, &mut sink).unwrap();
+        }
+        r.finish(&mut sink).unwrap();
+        assert_eq!(out.len(), 48_000);
+        let peak = (0..out.len())
+            .max_by(|&a, &b| out[a].abs().total_cmp(&out[b].abs()))
+            .unwrap();
+        assert!((peak as i64 - 24_000).abs() <= 1, "click at {peak}");
     }
 }

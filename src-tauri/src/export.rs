@@ -7,7 +7,7 @@ use crate::library::{Decoders, MediaEntry, decode_device};
 use crate::mix;
 use editelier_core::{FrameRate, Id, Layer, Project, Tick, TitleClip};
 use editelier_export::win::{ExportOptions, Exporter};
-use editelier_export::{CancelToken, ExportError, Preset, loudness};
+use editelier_export::{CancelToken, ExportError, Preset};
 use editelier_media::Tools;
 use editelier_render::{Fonts, Gpu, Renderer};
 use std::collections::HashMap;
@@ -98,17 +98,7 @@ pub fn run(job: Job, tools: Tools, gpu: &Gpu, mut progress: impl FnMut(f32)) -> 
         let mut buf = vec![0f32; n * 2];
         mix::mix(p, &job.media, s0, &mut buf);
         if let Some(target) = preset.loudness {
-            let r = loudness::measure(&buf, target).map_err(export_err)?;
-            // ponytail: no true-peak limiter; lower the gain to respect the ceiling instead.
-            let gain = if r.needs_limiter {
-                r.gain_db.min(target.true_peak_dbtp - r.true_peak_dbtp)
-            } else {
-                r.gain_db
-            };
-            if gain.is_finite() && gain != 0.0 {
-                let g = loudness::db_to_linear(gain);
-                buf.iter_mut().for_each(|s| *s *= g);
-            }
+            mix::normalize(&mut buf, target).map_err(export_err)?;
         }
         Some(buf)
     } else {
