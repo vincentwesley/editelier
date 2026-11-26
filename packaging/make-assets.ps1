@@ -1,31 +1,27 @@
-# Regenerates packaging/Assets/*.png (MSIX visual assets) from the house brand mark.
-# Source: _house/brand/png/mark-b.png (already cropped to the artwork, 3150x1800), scaled only
-# (never recoloured or redrawn), centred on
-# a #11150e tile with >= 0.5x mark-height clear space on every side (brand README rules).
-# Usage: powershell -File packaging/make-assets.ps1 [-Brand <path to _house/brand>]
-param([string]$Brand = (Join-Path $PSScriptRoot '..\..\_house\brand'))
+# Regenerates packaging/Assets/*.png (MSIX visual assets) from Editelier's own mark (brand/README.md, D22).
+# Source: brand/png/mark-dark-1024.png (square, transparent, built-in margin; `node brand/render.mjs` makes it),
+# scaled only, centred on a #11150e tile. Taskbar sizes (targetsize-*) fill the tile; the rest keep 10% clear space.
+# Usage: powershell -File packaging/make-assets.ps1 [-Brand <path to brand/>]
+param([string]$Brand = (Join-Path $PSScriptRoot '..\brand'))
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
-$srcPath = Join-Path $Brand 'png\mark-b.png'
-if (-not (Test-Path $srcPath)) { throw "Brand mark not found: $srcPath (pass -Brand)" }
+$srcPath = Join-Path $Brand 'png\mark-dark-1024.png'
+if (-not (Test-Path $srcPath)) { throw "Mark not found: $srcPath (run node brand/render.mjs or pass -Brand)" }
 $src = [System.Drawing.Image]::FromFile((Resolve-Path $srcPath))
 $crop = New-Object System.Drawing.RectangleF 0, 0, $src.Width, $src.Height
 $out = Join-Path $PSScriptRoot 'Assets'
 New-Item -ItemType Directory -Force $out | Out-Null
 Get-ChildItem $out -Filter *.png | Remove-Item
 
-function Tile([string]$name, [int]$w, [int]$h) {
+function Tile([string]$name, [int]$w, [int]$h, [double]$fill = 0.8) {
   $bmp = New-Object System.Drawing.Bitmap $w, $h
   $g = [System.Drawing.Graphics]::FromImage($bmp)
   $g.Clear([System.Drawing.ColorTranslator]::FromHtml('#11150e'))
   $g.InterpolationMode = 'HighQualityBicubic'
   $g.PixelOffsetMode = 'HighQuality'
   $g.SmoothingMode = 'HighQuality'
-  # Mark height m: m + 2 * 0.5m <= h and markWidth + 2 * 0.5m <= w.
-  $ar = $crop.Width / $crop.Height
-  $m = [Math]::Min($h / 2.0, $w / ($ar + 1.0))
-  $mw = $m * $ar
-  $dst = New-Object System.Drawing.RectangleF (($w - $mw) / 2), (($h - $m) / 2), $mw, $m
+  $m = [Math]::Min($w, $h) * $fill
+  $dst = New-Object System.Drawing.RectangleF (($w - $m) / 2), (($h - $m) / 2), $m, $m
   $g.DrawImage($src, $dst, $crop, [System.Drawing.GraphicsUnit]::Pixel)
   $g.Dispose()
   $bmp.Save((Join-Path $out "$name.png"), [System.Drawing.Imaging.ImageFormat]::Png)
@@ -41,8 +37,8 @@ foreach ($s in $scales) {
   }
 }
 foreach ($t in 16, 24, 32, 48, 256) {
-  Tile "Square44x44Logo.targetsize-$t" $t $t
-  Tile "Square44x44Logo.targetsize-${t}_altform-unplated" $t $t
+  Tile "Square44x44Logo.targetsize-$t" $t $t 1.0
+  Tile "Square44x44Logo.targetsize-${t}_altform-unplated" $t $t 1.0
 }
 $src.Dispose()
 Write-Host "Assets -> $out"
