@@ -29,3 +29,4 @@ test-media/*
 *.pfx
 *.cer
 .claude/worktrees/
+/third_party/
