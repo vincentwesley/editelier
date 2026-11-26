@@ -29,7 +29,7 @@ Method: per timeline frame, the debug command `render_frame_hash --stage decoded
 | A-QUAL-03 | Golden frames (offscreen render, fixed seed/resolution): title, fades, scaling, 16:9/9:16 canvas | per-pixel max Δ ≤ 2/255 on ≥ 99.9% of pixels and SSIM ≥ 0.995 per frame; failure writes actual + ×8 diff |
 | A-QUAL-04 | Colour conversion (CPU reference): F-tags-{601,709}×{limited,full} | max Δ ≤ 1 code value per channel vs expected RGB |
 | A-QUAL-05 | HDR HLG + PQ fixtures tone-mapped to SDR | golden thresholds of A-QUAL-03; output tagged BT.709 |
-| A-QUAL-06 | Loudness normalise (oracle: ffmpeg `ebur128=peak=true`) | Social: −14 ± 0.5 LUFS, TP ≤ −1.0 dBTP; Broadcast (M2): −23 ± 0.5 LUFS, TP ≤ −1.0 dBTP |
+| A-QUAL-06 | Loudness normalise (oracle: ffmpeg `ebur128=peak=true`) | Social: −14 ± 0.5 LUFS, TP ≤ −1.0 dBTP; Broadcast (M3): −23 ± 0.5 LUFS, TP ≤ −1.0 dBTP |
 | A-QUAL-07 | Export conformance per preset (ffprobe JSON) | resolution/fps/codec/profile per preset file; zero-based PTS; no `elst`; `moov` before `mdat`; closed GOP; AAC-LC 48 kHz stereo; `color_primaries/transfer/space = bt709`, `color_range = tv` |
 
 ## A-PERF: budgets (reference laptop)
@@ -56,7 +56,20 @@ Measured by the headless bench (`cargo xtask accept` drives playback offscreen v
 | A-UI-04 | Undo/redo via menu, keys and History | state after each matches A-CUT-06 expectation |
 | A-UI-05 | axe on Welcome, editor, export, About, settings, dark + light | 0 serious/critical |
 | A-UI-06 | About dialog | credits card, logo + artist credit, FFmpeg LGPLv2.1 notice with ffmpeg.org, licence and source-archive links |
-| A-UI-07 (M2) | Kill process mid-edit, relaunch | project reopens at the last journaled command with a one-line banner |
+| A-UI-07 (M3) | Kill process mid-edit, relaunch | project reopens at the last journaled command with a one-line banner |
+
+## A-COL: colour and looks (D20)
+
+Method: offscreen render through the full grade pipeline (input transform → Fix → Look → Film → DRT), fixed seed and resolution, compared like A-QUAL-03 unless stated. Test images: the fixed open set `C-colour` (CC0/CC BY photos + owner-shot street, interior and face clips, no copyrighted reference frames) plus committed synthetic charts (`F-chart-grey`, `F-chart-skin`: grey ramp, colour patches, skin-tone patches along the I-line). Film grain is seeded by frame index.
+
+| Id | Check | Pass |
+|---|---|---|
+| A-COL-01 (M1) | Neutral grade on SDR (8-bit 709 limited + full, sRGB still) round-trip through inverse DRT → DRT | max Δ ≤ 1/255 per channel on 100 % of pixels vs the source |
+| A-COL-02 (M2) | Each built-in look at 100 % on every `C-colour` image + charts | golden frames (A-QUAL-03 thresholds); failure writes actual + ×8 diff |
+| A-COL-03 (M2) | Strength 0 % and 100 % per look | 0 % = A-COL-01 identity; 100 % = the A-COL-02 golden; 150 % renders finite (no NaN/Inf), clamped |
+| A-COL-04 (M2) | Skin protect on, each look at 100 % on `F-chart-skin` | every skin patch's hue within ±15° of the skin line (OKLCh, measured from the chart); protection off shows the look's raw shift (sanity) |
+| A-COL-05 (M2) | Grade cost: 100 % look incl. film layer, GPU timestamps, A-PERF conditions | ≤ 5 ms/frame 1080p p95 on Iris Xe |
+| A-COL-06 (M5) | `.cube` parser: fuzz (cargo-fuzz, 10 min at milestone) + malformed corpus (bad size, wrong entry count, NaN/Inf, out-of-domain, > 64 MB, truncated, non-UTF-8) | no panic or OOM; every malformed file rejected with a plain-language error; valid LUTs match a CPU tetrahedral reference within 1/1023 |
 
 ## A-IMPORT: corpus
 
@@ -66,8 +79,8 @@ Every corpus file: probe succeeds, thumbnail + waveform produced, VFR flag corre
 |---|---|
 | A-IMPORT-01 | Video corpus (table below) |
 | A-IMPORT-02 | Audio corpus |
-| A-IMPORT-03 | Stills + RAW in M1: graceful (still as image clip or clear error); full support M3/M8 |
-| A-IMPORT-04 (M3), A-IMPORT-05 (M8) | Stills and RAW fully supported |
+| A-IMPORT-03 | Stills + RAW in M1: graceful (still as image clip or clear error); full support M4/M9 |
+| A-IMPORT-04 (M4), A-IMPORT-05 (M9) | Stills and RAW fully supported |
 
 | Corpus id | Content | Source |
 |---|---|---|
@@ -100,4 +113,4 @@ Fetched via `cargo xtask fetch-media` from `test-media/MANIFEST.json` (URL, SHA-
 | A-LEGAL-03 | Package file list vs `THIRD_PARTY_NOTICES.md` | every bundled third-party file listed with licence; LGPL text + FFmpeg source link present |
 | A-LEGAL-04 | Release exe | 0 matches for `editelier-automation` (automation channel absent) |
 | A-LEGAL-05 | Network + naming | no HTTP client crate in `cargo tree` of release; CSP `connect-src` has no remote hosts; "Premiere/DaVinci/Resolve/CapCut" appear only in the keymap names file and docs |
-| A-LEGAL-06 (M5+) | Model files | SHA-256 matches manifest; licence file shipped; listed in notices |
+| A-LEGAL-06 (M6+) | Model files | SHA-256 matches manifest; licence file shipped; listed in notices |

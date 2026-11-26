@@ -6,7 +6,7 @@ Follows `../CLAUDE.md` house rules (orchestrate, house style, safety, identity).
 Read `docs/next-session.md` first, then `docs/PLAN.md` and `docs/DECISIONS.md`. `docs/research/` is written by research agents; don't hand-edit it.
 
 ## Purpose
-Free Windows-only desktop video + photo editor by Vin's Atelier: pro depth, beginner ease, everything on-device (no account, watermark, upload, ads or telemetry). Tauri 2 shell, Rust workspace core, TS + Vite UI in `ui/`, wgpu preview in a child HWND, MSIX for the Microsoft Store.
+Free Windows-only desktop video + photo editor by Vin's Atelier: colour is the centre (one-tap cinematic looks with depth, D20), pro depth, beginner ease, everything on-device (no account, watermark, upload, ads or telemetry). Tauri 2 shell, Rust workspace core, TS + Vite UI in `ui/`, wgpu preview in a child HWND, MSIX for the Microsoft Store.
 
 ## How to work
 - **All subagents run on Opus** (owner override, D17). The orchestrator still only dispatches; builders write code, in parallel, each prompt naming allowed folders, exact checks and "no push".

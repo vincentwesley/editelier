@@ -1,6 +1,6 @@
 # Research index
 
-All research dated 2026-11-25, written by research agents into `docs/research/` (don't hand-edit). Every claim there carries its own source link. Decisions built on it: `docs/DECISIONS.md`.
+All research dated 2026-11-25 (06: 2026-11-26), written by research agents into `docs/research/` (don't hand-edit). Every claim there carries its own source link. Decisions built on it: `docs/DECISIONS.md`.
 
 | # | File | Topic |
 |---|---|---|
@@ -9,6 +9,7 @@ All research dated 2026-11-25, written by research agents into `docs/research/` 
 | 03 | [research/03-ux.md](research/03-ux.md) | UX: Premiere Pro, DaVinci Resolve, CapCut, photo editors |
 | 04 | [research/04-windows-media-legal.md](research/04-windows-media-legal.md) | Windows preview surface, decode/encode, patents, MSIX, AI licences, name check, FFmpeg LGPL |
 | 05 | [research/05-standards-tooling.md](research/05-standards-tooling.md) | Timing/colour/audio standards, test approach, Claude Code tooling |
+| 06 | [research/06-colour-grading.md](research/06-colour-grading.md) | Colour grading: cinematic one-tap looks for video and photos, pipeline, legal |
 
 ## Summaries
 
@@ -21,6 +22,8 @@ All research dated 2026-11-25, written by research agents into `docs/research/` 
 **04 Windows media + legal.** Preview: wgpu (DX12) in a child HWND beside the WebView2, overlays drawn in wgpu (canvas streaming costs ~250 MB/s at 1080p30). Patents: H.264/HEVC/AAC pools license whoever ships the codec, so route them through Windows Media Foundation and ship FFmpeg without its software h264/hevc/aac; AV1 + Opus are royalty-free. tauri-bundler has no MSIX: use Microsoft `winapp` CLI, `runFullTrust`, no `broadFileSystemAccess`, Win11 min. AI: whisper.cpp/Whisper/distil-whisper MIT, MODNet/MediaPipe Apache, BiRefNet MIT (verify), RMBG excluded. "Editelier": no conflicts in USPTO/Store/GitHub/registries; IPOS/WIPO/EUIPO need manual checks; editelier.com is taken.
 
 **05 Standards + tooling.** Integer/rational time, keyframe seek + decode-forward, honour edit lists on import and write none on export. VFR preserved on timeline (sample-and-hold), conformed at export. Linear-light Rec.709 f16 working space, tag-driven 601/709 and range, BT.709-tagged exports. 48 kHz mix, `ebur128`, −14 LUFS/−1 dBTP social and −23 broadcast. Tests: ffmpeg oracle (framemd5, PTS, tags), golden frames ≤2/255 + SSIM ≥0.995, VMAF ≥93 at milestones; E2E via WebdriverIO tauri service with debug frame hashes. Own JSON-RPC named-pipe automation channel, debug-only and locked down.
+
+**06 Colour grading.** The owner's end goal (vibrant, cinematic graded video and photos in one tap). Measured reference frames share lifted teal-leaning blacks, low overall saturation with 1–2 hero colours, warm subject / cool environment, highlight roll-off, halation and grain. UX lesson: fixed hidden order Fix → Look → Film, few well-named looks, strength to 150 %, apply-to-all, paste with re-masking. Pipeline: per-clip grade before the compositor in scene-linear with ACEScct-style log for tone ops and OKLCh for hue/sat/skin, own invertible DRT so SDR round-trips unchanged, skin protect on by default, strict `.cube` import with tetrahedral WGSL. Iris Xe estimate 3–5 ms/frame at 1080p. Legal: ship only our own parameter looks (MIT); AgX/Filmic (no licence) and darktable (GPL) as ideas only; no third-party LUTs or film-stock names. Proposes 12 built-in looks and moving colour to M2 (adopted: D20).
 
 ## Tools: installed / listed
 

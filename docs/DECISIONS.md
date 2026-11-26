@@ -1,6 +1,6 @@
 # Decisions
 
-Owner-approved 2026-11-25. Each entry: decision, why, research link. Research files: `docs/research/0N-*.md` (abbreviated R01..R05). Change a decision by adding a new numbered entry that supersedes it; don't rewrite history.
+Owner-approved 2026-11-25. Each entry: decision, why, research link. Research files: `docs/research/0N-*.md` (abbreviated R01..R06). Change a decision by adding a new numbered entry that supersedes it; don't rewrite history.
 
 ## D1 Stack and preview surface
 - **Decision:** Tauri 2 shell + TypeScript/Vite UI (house style kit), Rust Cargo workspace core. Preview = wgpu on DX12 in a native **child HWND** positioned (via `SetWindowPos`) under a rectangle the WebView2 UI reserves and reports (ResizeObserver + `devicePixelRatio`). All viewer overlays (safe areas, crop handles, text gizmos, scopes) are drawn in wgpu; no HTML over the viewer.
@@ -17,7 +17,7 @@ Owner-approved 2026-11-25. Each entry: decision, why, research link. Research fi
   - the tick time type: 254,016,000,000 ticks/s `Tick(i64)` + rational `FrameRate`, from `storytold/craft-libs` `craft-timeline` at the revision FilmCraft `2d1d1b6` pins.
 - Source commit: FilmCraft `2d1d1b6`. Vendored copies chosen over git pins for stability (upstream releases every 2–3 days, recently moved code to craft-libs).
 - **Copy patterns (own code):** command registry shared by UI/CLI/agent (id, param schema, `enabled()` with reason, undo journal); copy-on-write `Arc<Project>` undo; ffmpeg-oracle + golden-frame + GPU-parity tests; layering check in xtask.
-- **Evaluate (M2+):** OpenCut classic MIT wgpu crates (`gpu`/`compositor`/`effects`/`masks`/`time`, wgpu 29) for compositor/effects; pin a commit if used.
+- **Evaluate (M3+):** OpenCut classic MIT wgpu crates (`gpu`/`compositor`/`effects`/`masks`/`time`, wgpu 29) for compositor/effects; pin a commit if used.
 - Never ship ArtCraft/FilmCraft names or icons. Avoid `symphonia` (MPL-2.0) unless we accept the source-pointer duty.
 - **Why:** wrong product shape (Premiere clone, egui UI that upstream won't swap for Tauri), Windows is their weakest platform, high churn. The pure crates are high value, low coupling.
 - **Research:** R01 verdict + §10, R02 §A/Recommendations.
@@ -31,6 +31,9 @@ Owner-approved 2026-11-25. Each entry: decision, why, research link. Research fi
 - **Layering:** MF code lives behind the `media` trait in `media-win`; the editing core is platform-free.
 - **Why:** pools license whoever ships a codec implementation; calling OS codecs is the Firefox precedent (industry practice, not a written safe harbour). Note R04 recommended FFmpeg `d3d11va` decode; we chose MF because d3d11va still uses libavcodec's H.264/HEVC parsing code (grey zone).
 - **Research:** R04 §2, §3, §7; R02 §C (rsmpeg).
+- **Amendment (2026-11-26, M1 build findings):**
+  - **FFmpeg runs as LGPL helper processes** (`ffprobe.exe` / `ffmpeg.exe` beside the app) instead of in-process `rsmpeg`: no libclang build dependency, and the process boundary makes LGPL compliance and user replacement trivial (swap the exes), which also resolves the MSIX DLL-swap question (D9, `docs/LEGAL-REVIEW.md`). In-process can be revisited if helper latency proves too high (for example per-frame demux in playback).
+  - **MF export limits:** MF's moov-first (faststart) option corrupts output, so we relocate `moov` ourselves after the write (current implementation limited to files ≤ 4 GiB; lift via `co64` before long 4K exports). MF H.264 exports carry no B-frames. MF's AAC encoder tops out at **192 kbps**: that is our ceiling, even where a platform preset asks for more (YouTube recommends 384 kbps stereo). MF has no lossless H.264, so the MF test export profile is H.264 CQP 12 (near-lossless, not bit-exact).
 
 ## D4 Timing, VFR, seeking, proxies
 - **Decision:** all time in integer ticks (D2 type), rational frame rates, half-open ranges, floats only at the UI edge. VFR is **kept** on the timeline: timeline time t shows the latest source frame with PTS ≤ t (sample-and-hold), "VFR" badge on import; conform to CFR **only at export**, audio as master clock. Frame-exact seek via our own per-file keyframe/PTS index (seek to keyframe ≤ target, decode forward, discard until PTS ≥ target). Edit lists honoured on import; exports write zero-based PTS, no edit lists, `+faststart`, closed GOP.
@@ -60,7 +63,7 @@ Owner-approved 2026-11-25. Each entry: decision, why, research link. Research fi
 
 ## D9 Packaging and distribution
 - **Decision:** MSIX built with Microsoft **winapp CLI** (tauri-bundler has no MSIX). Self-signed dev cert for local installs (never committed); the Store re-signs on submission. Manifest: `Windows.FullTrustApplication` + `runFullTrust`, **no** `broadFileSystemAccess`, `MinVersion` Windows 11 (10.0.22000), file associations (.mp4/.mov/.mkv/.jpg/.png/project file), identity copied from Partner Center. Caches in LocalCache, install dir read-only.
-- **Distribution:** Microsoft Store (free), unsigned MSIX + test-cert instructions and a portable ZIP (lets users swap FFmpeg DLLs, see LGPL) on GitHub Releases for testers, landing page on Cloudflare Pages (D18).
+- **Distribution:** Microsoft Store (free), unsigned MSIX + test-cert instructions and a portable ZIP (lets users swap the FFmpeg helper exes, see LGPL and the D3 amendment) on GitHub Releases for testers, landing page on Cloudflare Pages (D18).
 - **Research:** R04 §4, §7 item 10.
 
 ## D10 On-device AI
@@ -100,3 +103,14 @@ Owner-approved 2026-11-25. Each entry: decision, why, research link. Research fi
 ## D19 Clean-room and naming
 - **Decision:** no proprietary assets, layouts, icons or trade dress. Never use Premiere, DaVinci, Resolve or CapCut in the product name, icon, Store listing or marketing; factual comparisons in docs are fine, and the optional keymap names use them descriptively only. GPL/AGPL projects are study-only (no code, shaders or text copied).
 - **Research:** R03 clean-room note, R02 §B.
+
+## D20 Colour is the product's centre (owner, 2026-11-26)
+- **Goal:** anyone can easily make vibrant, cinematic colour-graded video **and** photos (one-tap looks with depth for tweaking), like films and cinematic YouTubers. Colour moves from M4 to M2 (`docs/PLAN.md`).
+- **Pipeline (R06 §4.1):** decode → tagged Y'CbCr→RGB → input transform → scene-linear f16 → **per-clip grade before the D5 compositor** (titles and graphics are never graded; project-level grain may sit over the composite) → display rendering transform → Rec.709 → compositor → encode. Grade stages run in a **fixed, hidden order: Fix → Look → Film**.
+- **Spaces:** blending, blur, exposure, halation and bloom in **scene-linear**; contrast, wheels, curves and look tone shaping in an **ACEScct-style log** grading space (ACES is Apache-2.0); hue, saturation, vibrance and skin work in **OKLCh**.
+- **Own invertible tone curve (DRT):** a clean-room parametric sigmoid; SDR sources go through its exact inverse (capped at about +3 stops), so a **neutral grade is identity on SDR** (A-COL-01). Log, HDR and RAW sources skip the inverse. AgX, Filmic and darktable are **ideas only** (AgX/Filmic repos carry no licence file; darktable is GPL).
+- **Looks:** **strength slider 0–150 %** (parametric looks scale parameters toward identity; LUT looks mix in log space). **Skin protect on by default** (soft OKLCh hue qualifier, attenuates hue and saturation pushes only). Built-in looks are our own clean-room parameter sets, shipped as MIT JSON, with our own names: no stock, film-stock or brand names, **no third-party LUTs** or HaldCLUTs.
+- **`.cube` import (M5):** untrusted input, validated strictly (size 2–256, exact entry count, finite floats, file ≤ 64 MB); tetrahedral interpolation in WGSL.
+- **Photos** use the identical pipeline and looks.
+- **Why:** the owner's end goal is graded edits; one-tap looks differentiate a free editor where multitrack does not; where the grade sits is a pipeline decision that is cheap now and expensive to retrofit after more golden frames exist.
+- **Research:** R06 §4, §5, §6 and summary items 8–11; R03 (looks-first UX); R05 §A3.
