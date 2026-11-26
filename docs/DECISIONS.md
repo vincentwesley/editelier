@@ -52,7 +52,7 @@ Owner-approved 2026-11-25. Each entry: decision, why, research link. Research fi
 - **Research:** R05 §A4, R02 §C, R01 §2 (audio clock).
 
 ## D7 Agent control channel
-- **Decision:** our own JSON-RPC over a per-user Windows named pipe, compiled only in debug builds with a `dev-automation` cargo feature, enabled at runtime by `EDITELIER_AUTOMATION=1`. Pipe `\\.\pipe\editelier-automation-<pid>-<random>`, `FILE_FLAG_FIRST_PIPE_INSTANCE`, `PIPE_REJECT_REMOTE_CLIENTS`, DACL = current user only; per-session 256-bit token in a user-only file deleted on exit; fixed command allow-list; strict serde input structs; test-workspace path confinement. Used by tests and walkthroughs. Never use WebView2 `--remote-debugging-port`.
+- **Decision:** our own JSON-RPC over a per-user Windows named pipe, compiled only in debug builds with an `agent` cargo feature (a release build with it fails to compile), enabled at runtime by `EDITELIER_AGENT=1`. Code: `src-tauri/src/agent.rs`. Pipe `\\.\pipe\editelier-agent-<random>`, `FILE_FLAG_FIRST_PIPE_INSTANCE`, `PIPE_REJECT_REMOTE_CLIENTS`, DACL = current user only; per-session 256-bit token in a user-only file deleted on exit; fixed command allow-list; strict serde input structs; test-workspace path confinement. Used by tests and walkthroughs. Never use WebView2 `--remote-debugging-port`.
 - **Optional:** evaluate the P3GLEG Tauri MCP plugin (token auth, refuses release builds) in dev only.
 - **Why:** tests need native state (frame hashes, timeline) WebDriver can't see; FilmCraft's MCP lacked path confinement despite its own rule.
 - **Research:** R05 §C3, R01 §7.
