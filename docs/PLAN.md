@@ -17,7 +17,7 @@ crates/
   render/               wgpu: per-clip grade (Fix → Look → Film) + DRT, linear-light f16 compositor, titles (cosmic-text + glyphon) (D5, D20)
   audio/                48 kHz mix, cpal output clock, loudness (D6)
   proxy/                proxy, thumbnail and waveform-peak cache (D4)
-  agent/                dev-automation JSON-RPC named pipe, debug + feature-gated (D7)
+  agent/                `agent` feature JSON-RPC (lives in src-tauri/src/agent.rs) named pipe, debug + feature-gated (D7)
   vendor/               filmcraft-audio-dsp, filmcraft-color, filmcraft-scopes, craft-time (D2)
 xtask/                  check, accept, layers, fetch-media, ffmpeg-build, package (MSIX)
 ui/                     TS + Vite UI, house kit
