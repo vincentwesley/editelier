@@ -63,4 +63,4 @@ Rust 1.100.0 (pinned in `rust-toolchain.toml`), tauri-cli 2.12.6, MSVC 14.44 / W
 | pollster | 1.0.3 | Apache-2.0/MIT |
 | serde | 1.x | MIT OR Apache-2.0 |
 
-Whole lockfile (all targets): no GPL/AGPL. MPL-2.0 (file-level copyleft, unmodified, fine): cssparser, cssparser-macros, selectors, dtoa-short, option-ext (Tauri build/utils). Two crates offer `MIT OR Apache-2.0 OR LGPL-2.1-or-later`; we take MIT. The app icon `src-tauri/icons/icon.ico` is generated from `_house/brand/png/mark-b.png` (Vin's Atelier logo, all rights reserved per `NOTICE.md`).
+Whole lockfile (all targets): no GPL/AGPL. MPL-2.0 (file-level copyleft, unmodified, fine): cssparser, cssparser-macros, selectors, dtoa-short, option-ext (Tauri build/utils). Two crates offer `MIT OR Apache-2.0 OR LGPL-2.1-or-later`; we take MIT. The app icon `src-tauri/icons/icon.ico` was generated from the studio mark during the spike; since D22 it comes from Editelier's own mark (`brand/`).

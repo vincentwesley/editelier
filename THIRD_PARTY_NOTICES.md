@@ -53,4 +53,4 @@ Dev builds run `ffprobe.exe`/`ffmpeg.exe` from a BtbN `lgpl-shared` build that `
 
 ## MSIX package (`packaging/`)
 
-Visual assets in `packaging/Assets/` are scaled from the Vin's Atelier mark (`mark-b`), all rights reserved (see `NOTICE.md`), not MIT. The package also carries `LICENSE`, `NOTICE.md`, this file and the fonts' `OFL.txt` under `licences/`.
+Visual assets in `packaging/Assets/` are generated from Editelier's own mark (`brand/`, D22), all rights reserved (see `NOTICE.md`), not MIT. The package also carries `LICENSE`, `NOTICE.md`, this file and the fonts' `OFL.txt` under `licences/`.
