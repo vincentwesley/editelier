@@ -21,3 +21,11 @@ Pixel kit and icons (`pixel/`, `icons/`):
 
 
 Commissioned artwork and the credits character are **all rights reserved, not MIT**: see `NOTICE.md`.
+
+## Rust crates (`crates/editelier-media`)
+
+Compiled into the app, all permissive: `windows`/`windows-core` 0.62 (MIT OR Apache-2.0), `serde_json` (MIT OR Apache-2.0), `rubato` 5.1 + `audioadapter*`, `rustfft`, `num-*`, `transpose`, `strength_reduce`, `primal-check` (MIT OR Apache-2.0), `realfft`, `windowfunctions`, `zmij` (MIT), `audio-codec-algorithms` (0BSD OR Apache-2.0), `memchr` (Unlicense OR MIT), `unicode-ident` (MIT OR Apache-2.0 AND Unicode-3.0). Full list: `cargo tree -p editelier-media -e normal -f "{p} {l}"`.
+
+## FFmpeg (not in the repo yet)
+
+Dev builds run `ffprobe.exe`/`ffmpeg.exe` from a BtbN `lgpl-shared` build that `scripts/fetch-ffmpeg.ps1` fetches into gitignored `third_party/ffmpeg/` (LGPL-2.1-or-later). Shipped builds will use our own LGPL build with the software H.264/HEVC/AAC codecs disabled (D3). Its notice, licence text and source link go here when it lands.

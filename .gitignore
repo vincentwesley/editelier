@@ -28,3 +28,4 @@ test-media/*
 *.msix
 *.pfx
 *.cer
+/third_party/
