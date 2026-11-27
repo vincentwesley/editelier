@@ -17,16 +17,20 @@ Easy, really good colour-graded cinematic video AND photos (vibrant, film-like, 
 - `cargo xtask check | layers | fetch-media | package [--dev-cert] | accept <id>|--milestone m1`.
 - Security review is required whenever file input, the agent channel (`src-tauri/src/agent.rs`, debug + `agent` feature only) or network/CSP code changes.
 
+## Session 3 (2026-11-27), local main NOT pushed (ahead of origin)
+Merged on local `main`: Windows CI workflow (never run yet), UI-button export e2e (9/9), own LGPLv2.1 FFmpeg 8.1.3 (`third_party/ffmpeg-lgpl`, gitignored; source tarballs in `third_party/ffmpeg-lgpl-src` for the Release; build: `wsl -d editelier-build -u root`, then `bash packaging/build-ffmpeg.sh`), MF fills HEVC/H.264 colour + bit depth (D23), About credits card (D13). Security review of the agent/CI changes: clean. Unmerged branch `m1-accept` (worktree `.claude/worktrees/agent-aa058b7aaeee1406e`): accept automation (A-CUT FFV1 frame-exact, 60 s perf benches, A-UI welcome spec, xtask runner); group 1 (cut/qual/col/import/legal/MSIX-01) 16/16 pass; perf + e2e groups not run. First thing next session: end-of-batch checks on main, push main (first CI run; adjust skip list if needed), then finish `m1-accept`.
+Laptop hit critical memory once with a full accept run: use `CARGO_BUILD_JOBS=2`, build tests with `--no-run` first, run accept ids in groups.
+
 ## Current state (2026-11-26, end of session 2)
 M1 is feature-complete on `main` (pushed): editing core, media (probe/index/MF decode/proxies, rotation, EXIF, A/V offset, streamed audio), renderer (identity grade stage, titles, NV12 out, orientation), playback (cpal + null sink), export (MF QSV/AMF/NVENC/software, presets, loudness + true-peak limiter, zero-copy pipelined), UI (welcome, editor, timeline, keymaps, export dialog, About, own Editelier logo), xtask + MSIX packaging (dev-signed), debug agent channel + off-screen WebdriverIO suite (9/9, incl. export via the UI button), security fix for UNC/WebDAV paths in project files + ffmpeg `-protocol_whitelist file`.
 
 ## Next (in order) to finish M1 and tag v0.1.0
-1. **Own LGPLv2.1 FFmpeg build** (`packaging/ffmpeg-build.md`, `build-ffmpeg.sh`: no `--enable-version3`, `--disable-network`, h264/hevc/aac software codecs disabled). Needs Docker or WSL2; check which exists, else MSYS2. Then A-LEGAL-01 must pass.
+1. ~~Own LGPLv2.1 FFmpeg build~~ done (session 3). (`packaging/ffmpeg-build.md`, `build-ffmpeg.sh`: no `--enable-version3`, `--disable-network`, h264/hevc/aac software codecs disabled). Needs Docker or WSL2; check which exists, else MSYS2. Then A-LEGAL-01 must pass.
 2. **MSIX install checks** A-MSIX-02..04 (blocked until the owner trusts the dev cert; see NEEDS-VIN).
 3. ~~Export through the UI in e2e~~ done (`m1-e2e-ui-export`): debug + `agent` builds with `EDITELIER_AGENT=1` answer the folder picker with `EDITELIER_TEST_EXPORT_DIR` (compiled out of release; unit test checks both); e2e 9/9.
-4. **Acceptance run** `cargo xtask accept --milestone m1` on an idle laptop; fill gaps marked "not yet automated" (A-UI ids, A-PERF 60 s budgets, A-CUT FFV1 lossless path via FFmpeg helper).
+4. **Acceptance run** (in progress on `m1-accept`: run perf group alone, then e2e group; write the 'Last run' table into ACCEPTANCE.md; merge) `cargo xtask accept --milestone m1` on an idle laptop; fill gaps marked "not yet automated" (A-UI ids, A-PERF 60 s budgets, A-CUT FFV1 lossless path via FFmpeg helper).
 5. **Usability walkthroughs** (first-time user; Premiere switcher) via the agent channel + screenshots; fix what confuses. Then `simplify` + `code-review` (low), `design-review` on headless screenshots, `docs/LEGAL-REVIEW.md` checklist.
-6. Add Windows CI (D16), tag `v0.1.0`, GitHub Release with the dev MSIX + cert instructions + portable zip.
+6. ~~Add Windows CI~~ done (session 3, unpushed). Tag `v0.1.0`, GitHub Release with the dev MSIX + cert instructions + portable zip.
 7. Then **M2 Looks** (PLAN.md M2, research 06 §6), then the landing page.
 
 ## Known gaps
