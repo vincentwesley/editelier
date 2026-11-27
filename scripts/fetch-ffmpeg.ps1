@@ -1,7 +1,7 @@
 # Downloads a pinned BtbN FFmpeg LGPL shared build into third_party/ffmpeg/ (gitignored). DEV ONLY.
 #
-# Shipped builds use our own LGPL build (BtbN scripts at a pinned tag) with the software
-# h264/hevc/aac/aac_fixed codecs disabled (D3, docs/LEGAL-REVIEW.md). BtbN lgpl-shared still
+# Shipped builds use our own LGPLv2.1 build (packaging/build-ffmpeg.sh -> third_party/ffmpeg-lgpl/,
+# preferred by `cargo xtask package` when present) without the software h264/hevc/aac codecs (D3). BtbN lgpl-shared still
 # contains those decoders, so it must never be packaged. editelier-media only asks FFmpeg to
 # decode royalty-free codecs (allow-list in crates/editelier-media/src/ffmpeg.rs).
 # BtbN prunes old autobuild tags; when the download 404s, bump Tag/File/Sha256 to a newer n8.1 build.
