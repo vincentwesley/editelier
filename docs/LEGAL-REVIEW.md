@@ -13,14 +13,14 @@ Run before every public release (GitHub Release or Store submission). Engineerin
 ## 2. FFmpeg LGPL compliance ([ffmpeg.org/legal](https://ffmpeg.org/legal.html), [R04 §7](research/04-windows-media-legal.md))
 - [ ] Our own build, no `--enable-gpl`/`--enable-nonfree`; software h264/hevc/aac disabled (A-LEGAL-01).
 - [ ] Shared DLLs, original names, beside the exe.
-- [ ] `COPYING.LGPLv2.1` + bundled lib licences (dav1d BSD, libopus BSD, …) in the package and in `THIRD_PARTY_NOTICES.md`.
-- [ ] Exact corresponding source (FFmpeg tarball at the tag, BtbN scripts at the commit, our patches) attached to the same GitHub Release.
-- [ ] `BUILD-FFMPEG.txt` (configure line, toolchain, tag, commit) shipped.
+- [ ] `COPYING.LGPLv2.1` + bundled lib licences (dav1d BSD-2, zlib; both in the build's `LICENSE.txt`) in the package and in `THIRD_PARTY_NOTICES.md`.
+- [ ] Exact corresponding source (`third_party/ffmpeg-lgpl-src/`: FFmpeg, dav1d, zlib tarballs + `build-ffmpeg.sh` + `CONFIGURE.txt`; no patches) attached to the same GitHub Release.
+- [ ] `BUILD-FFMPEG.txt` (configure line, toolchain, versions) shipped.
 - [ ] About box credits FFmpeg under LGPLv2.1 with links (D13). Spelled "FFmpeg".
 - [ ] Licence terms / Store terms say FFmpeg is LGPLv2.1, not ours, and don't forbid reverse engineering of it.
 - [ ] Users can swap the DLLs: portable ZIP on GitHub Releases + documented steps (MSIX installs are read-only; interpretation unverified).
 - [ ] Repeat on every FFmpeg bump.
-- **Status (2026-11-26):** `cargo xtask package` currently bundles the **dev** BtbN `lgpl-shared` build from `third_party/ffmpeg/` (contains software h264/hevc/aac, so A-LEGAL-01 fails on it by design). Dev/test MSIX only: never publish it. The shipped build must be our own, recipe and flags in `packaging/ffmpeg-build.md` (`packaging/build-ffmpeg.sh` is an untested stub). BtbN's lgpl variant is **LGPLv3** (`--enable-version3`): either drop that for LGPLv2.1 or change the About/notices text to LGPLv3.
+- **Status (2026-11-27):** our own LGPLv2.1 build exists: `packaging/build-ffmpeg.sh` (WSL2, mingw-w64) → `third_party/ffmpeg-lgpl/`, FFmpeg 8.1.3 + dav1d 1.5.5 (BSD-2) + zlib 1.3.1 static, allow-list config with no h264/hevc/aac codecs/parsers/hwaccels and no network (`packaging/ffmpeg-build.md`). A-LEGAL-01 passes on it. `cargo xtask package` bundles it when present (falls back to the dev BtbN LGPLv3 build with a warning; never publish that MSIX). Source archive for the Release: `third_party/ffmpeg-lgpl-src/`.
 - Package layout: `licences/FFmpeg/LICENSE.txt` (the build's own licence text) and `licences/FFmpeg/BUILD-FFMPEG.txt` (`-buildconf` + pin + source links) are written by `cargo xtask package`.
 
 ## 3. Codec patents ([R04 §3](research/04-windows-media-legal.md))

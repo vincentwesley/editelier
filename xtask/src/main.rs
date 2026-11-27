@@ -286,8 +286,14 @@ fn lint_manifest(m: &str) -> R {
     }
 }
 
+/// Our LGPLv2.1 build (`packaging/build-ffmpeg.sh`) when present, else the dev-only BtbN build.
 fn ffmpeg_dir() -> PathBuf {
-    root().join("third_party/ffmpeg")
+    let lgpl = root().join("third_party/ffmpeg-lgpl");
+    if lgpl.join("bin/ffmpeg.exe").is_file() {
+        lgpl
+    } else {
+        root().join("third_party/ffmpeg")
+    }
 }
 
 fn package(dev_cert: bool) -> R<PathBuf> {
@@ -296,7 +302,12 @@ fn package(dev_cert: bool) -> R<PathBuf> {
     lint_manifest(&m)?;
     let ff = ffmpeg_dir();
     if !ff.join("bin/ffmpeg.exe").is_file() {
-        return Err("third_party/ffmpeg missing: run `cargo xtask fetch-media`".into());
+        return Err("no FFmpeg: run packaging/build-ffmpeg.sh in WSL (or `cargo xtask fetch-media` for dev)".into());
+    }
+    if !ff.ends_with("ffmpeg-lgpl") {
+        eprintln!(
+            "warning: packaging the dev-only BtbN FFmpeg; A-LEGAL-01 fails on it (run packaging/build-ffmpeg.sh)"
+        );
     }
     run(npm().args(["run", "build"]))?;
     run(cargo().args([
@@ -350,7 +361,7 @@ fn package(dev_cert: bool) -> R<PathBuf> {
         lic.join("FFmpeg/BUILD-FFMPEG.txt"),
         format!(
             "FFmpeg (https://ffmpeg.org) is used under the GNU LGPL (see LICENSE.txt); Vin's Atelier does not own it.\n\
-             Build: {}\nSource: https://github.com/FFmpeg/FFmpeg and https://github.com/BtbN/FFmpeg-Builds (exact archive attached to the GitHub Release).\n\n{conf}",
+             Build: {}\nSource: https://ffmpeg.org (exact source archives and build script attached to the GitHub Release).\n\n{conf}",
             pinned.trim()
         ),
     )
@@ -641,7 +652,10 @@ fn plan(id: &str) -> Option<(Vec<Act>, &'static str)> {
             vec![Msix],
             "partial: alias launch with --measure, no automation ping / sample project",
         ),
-        "A-LEGAL-01" => (vec![Legal01], "full except BUILD-FFMPEG.txt match"),
+        "A-LEGAL-01" => (
+            vec![Legal01],
+            "full (BUILD-FFMPEG.txt match only on a packaged layout)",
+        ),
         "A-LEGAL-04" => (vec![Legal04], "full (release exe)"),
         "A-LEGAL-05" => (
             vec![Legal05],
@@ -765,6 +779,10 @@ fn act(a: Act) -> R {
                         bad.push(format!("{list} has {n}"));
                     }
                 }
+            }
+            let build = exe.with_file_name("licences/FFmpeg/BUILD-FFMPEG.txt");
+            if build.is_file() && !read(&build)?.contains(conf.trim()) {
+                bad.push("BUILD-FFMPEG.txt does not match -buildconf".into());
             }
             if bad.is_empty() {
                 Ok(())

@@ -49,7 +49,9 @@ Beyond the crates above and Tauri's own (listed in `docs/spikes/preview-surface.
 
 ## FFmpeg (not in the repo; bundled in the MSIX)
 
-Dev builds run `ffprobe.exe`/`ffmpeg.exe` from a BtbN `lgpl-shared` build that `scripts/fetch-ffmpeg.ps1` fetches into gitignored `third_party/ffmpeg/` (LGPL; this BtbN variant is built with `--enable-version3`, so LGPL-3.0-or-later). `cargo xtask package` copies `ffmpeg.exe`, `ffprobe.exe` and the `av*`/`sw*` DLLs (original names) into the MSIX, with `licences/FFmpeg/LICENSE.txt` and `licences/FFmpeg/BUILD-FFMPEG.txt` (configure line, pin, source links: https://github.com/FFmpeg/FFmpeg, https://github.com/BtbN/FFmpeg-Builds). Shipped builds will use our own LGPL build with the software H.264/HEVC/AAC codecs disabled (D3, `packaging/ffmpeg-build.md`); the libraries bundled inside it get listed here when it lands.
+Shipped builds bundle our own FFmpeg 8.1.3 build (`packaging/build-ffmpeg.sh` → gitignored `third_party/ffmpeg-lgpl/`, D3): `ffmpeg.exe`, `ffprobe.exe` and the `av*`/`sw*` DLLs under **LGPL-2.1-or-later** (no gpl/version3/nonfree; no software H.264/HEVC/AAC). Statically linked into those DLLs: **dav1d 1.5.5** (VideoLAN, BSD-2-Clause, https://code.videolan.org/videolan/dav1d) and **zlib 1.3.1** (Jean-loup Gailly and Mark Adler, Zlib licence, https://zlib.net). All three licence texts are in the build's `LICENSE.txt`, which `cargo xtask package` writes to `licences/FFmpeg/LICENSE.txt` beside `licences/FFmpeg/BUILD-FFMPEG.txt` (configure line + versions). Source: https://ffmpeg.org; the exact source archives and build script are attached to each GitHub Release.
+
+Dev builds may instead use a BtbN `lgpl-shared` build (`scripts/fetch-ffmpeg.ps1` → `third_party/ffmpeg/`, LGPL-3.0-or-later, contains the software H.264/HEVC/AAC codecs); it is never shipped.
 
 ## MSIX package (`packaging/`)
 
