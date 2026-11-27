@@ -10,12 +10,15 @@ import { INFO } from "./agent.mjs";
 const root = resolve(import.meta.dirname, "..");
 const app = process.env.EDITELIER_APP ?? join(root, "target", "debug", "editelier.exe");
 export const MEDIA = join(tmpdir(), "editelier-e2e");
+export const OUT = join(tmpdir(), "editelier-e2e-out");
 
 // Inherited by tauri-driver -> msedgedriver -> the app.
 Object.assign(process.env, {
   EDITELIER_AGENT: "1",
   EDITELIER_AUDIO: "null",
   EDITELIER_TEST_OFFSCREEN: "1",
+  // The export dialog's "Choose…" answers with this folder, no native picker (debug + agent only).
+  EDITELIER_TEST_EXPORT_DIR: OUT,
   // Chromium treats an off-screen window as occluded and stops painting; keep it rendering.
   // Tauri's own defaults are repeated because this variable replaces them.
   WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--disable-features=CalculateNativeWinOcclusion,msWebOOUI,msPdfOOUI,msSmartScreenProtection",

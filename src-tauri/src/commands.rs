@@ -770,7 +770,23 @@ pub async fn dialog_open_project(app: AppHandle) -> Res<Option<String>> {
 
 #[tauri::command]
 pub async fn dialog_pick_folder(app: AppHandle) -> Res<Option<String>> {
+    if let Some(dir) = test_export_dir() {
+        return Ok(Some(dir));
+    }
     blocking(move || Ok(dialog(&app).blocking_pick_folder().map(|f| f.to_string()))).await
+}
+
+/// E2E hook (D7): the native folder picker can't be automated, so debug + `agent` builds run
+/// with `EDITELIER_AGENT=1` answer it with `EDITELIER_TEST_EXPORT_DIR`. Compiled out of every
+/// other build; the chosen folder still goes through `export_start`'s path checks.
+fn test_export_dir() -> Option<String> {
+    #[cfg(all(feature = "agent", debug_assertions))]
+    if std::env::var("EDITELIER_AGENT").as_deref() == Ok("1") {
+        return std::env::var("EDITELIER_TEST_EXPORT_DIR")
+            .ok()
+            .filter(|d| !d.is_empty());
+    }
+    None
 }
 
 #[derive(Serialize)]
@@ -896,6 +912,19 @@ pub fn tick_loop(app: AppHandle, c: Arc<Core>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_export_dir_only_in_debug_agent_builds() {
+        // SAFETY: no other test reads these variables.
+        unsafe {
+            std::env::set_var("EDITELIER_AGENT", "1");
+            std::env::set_var("EDITELIER_TEST_EXPORT_DIR", r"C:\e2e");
+        }
+        let want = cfg!(all(feature = "agent", debug_assertions)).then(|| r"C:\e2e".to_string());
+        assert_eq!(test_export_dir(), want);
+        unsafe { std::env::set_var("EDITELIER_AGENT", "0") };
+        assert_eq!(test_export_dir(), None);
+    }
 
     fn core() -> Arc<Core> {
         let tmp = std::env::temp_dir().join("editelier-commands-test");

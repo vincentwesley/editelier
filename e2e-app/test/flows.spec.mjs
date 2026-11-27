@@ -1,5 +1,6 @@
 // A-UI flows in the real app. Native pickers can't be driven: media comes in through the agent's
-// import_media (the shell's own drop path) and the export runs through the agent.
+// import_media (the shell's own drop path); the export folder picker answers with
+// EDITELIER_TEST_EXPORT_DIR (debug + agent builds only), so the UI Export button runs for real.
 import AxeBuilder from "@axe-core/webdriverio";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, statSync } from "node:fs";
@@ -7,9 +8,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { browser, $, $$, expect } from "@wdio/globals";
 import { connect } from "../agent.mjs";
-import { MEDIA } from "../wdio.conf.mjs";
+import { MEDIA, OUT } from "../wdio.conf.mjs";
 
-const OUT = join(tmpdir(), "editelier-e2e-out");
 let agent;
 const snap = () => agent.call("snapshot");
 const tl = async () => (await snap()).project.timeline;
@@ -46,6 +46,18 @@ async function key(...keys) {
   // Shortcuts fire from the page, not from inputs: focus the timeline first.
   await browser.execute(() => document.getElementById("tl-scroll").focus());
   await browser.keys(keys);
+}
+
+/** The 1080p export of the 3-clip timeline: H.264 1920x1080 + AAC, 9 s. */
+function probe1080(file) {
+  expect(existsSync(file) && statSync(file).size > 10_000).toBe(true);
+  const r = spawnSync("ffprobe", ["-v", "error", "-show_entries", "stream=codec_type,codec_name,width,height:format=duration", "-of", "json", file], { encoding: "utf8" });
+  const info = JSON.parse(r.stdout);
+  const v = info.streams.find((s) => s.codec_type === "video");
+  expect([v.codec_name, v.width, v.height]).toEqual(["h264", 1920, 1080]);
+  expect(info.streams.some((s) => s.codec_type === "audio" && s.codec_name === "aac")).toBe(true);
+  // 3 clips of 3 s; the split keeps the length.
+  expect(Math.abs(Number(info.format.duration) - 9)).toBeLessThan(0.2);
 }
 
 describe("Editelier real app", () => {
@@ -139,15 +151,24 @@ describe("Editelier real app", () => {
     await until(async () => ["done", "failed"].includes((st = await agent.call("export_status", { job })).state), "export done", 300_000);
     expect(st.error ?? null).toBe(null);
     expect(st.state).toBe("done");
-    const file = st.path;
-    expect(existsSync(file) && statSync(file).size > 10_000).toBe(true);
-    const r = spawnSync("ffprobe", ["-v", "error", "-show_entries", "stream=codec_type,codec_name,width,height:format=duration", "-of", "json", file], { encoding: "utf8" });
-    const info = JSON.parse(r.stdout);
-    const v = info.streams.find((s) => s.codec_type === "video");
-    expect([v.codec_name, v.width, v.height]).toEqual(["h264", 1920, 1080]);
-    expect(info.streams.some((s) => s.codec_type === "audio" && s.codec_name === "aac")).toBe(true);
-    // 3 clips of 3 s; the split keeps the length.
-    expect(Math.abs(Number(info.format.duration) - 9)).toBeLessThan(0.2);
+    probe1080(st.path);
+  });
+
+  it("exports through the UI: Choose folder, Export button, file probes right", async () => {
+    await $('button[data-action="export"]').click();
+    await expect($("#export-dialog")).toBeDisplayed();
+    await $('input[name="preset"][value="youtube-1080"]').click();
+    await $("#export-pick").click();
+    await until(async () => (await $("#export-folder").getText()) === OUT, "test folder picked");
+    const name = `e2e-ui-${Date.now()}.mp4`;
+    await $("#export-name").setValue(name);
+    await $("#export-go").click();
+    let status;
+    await until(async () => /^Exported to |try again/i.test((status = await $("#export-status").getText())), "UI export done", 300_000);
+    expect(status).toBe(`Exported to ${join(OUT, name)}`);
+    probe1080(join(OUT, name));
+    await $("#export-go").click(); // "Done" closes the dialog
+    await expect($("#export-dialog")).not.toBeDisplayed();
   });
 
   it("agent screenshot lands only in temp", async () => {

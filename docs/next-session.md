@@ -18,12 +18,12 @@ Easy, really good colour-graded cinematic video AND photos (vibrant, film-like, 
 - Security review is required whenever file input, the agent channel (`src-tauri/src/agent.rs`, debug + `agent` feature only) or network/CSP code changes.
 
 ## Current state (2026-11-26, end of session 2)
-M1 is feature-complete on `main` (pushed): editing core, media (probe/index/MF decode/proxies, rotation, EXIF, A/V offset, streamed audio), renderer (identity grade stage, titles, NV12 out, orientation), playback (cpal + null sink), export (MF QSV/AMF/NVENC/software, presets, loudness + true-peak limiter, zero-copy pipelined), UI (welcome, editor, timeline, keymaps, export dialog, About, own Editelier logo), xtask + MSIX packaging (dev-signed), debug agent channel + off-screen WebdriverIO suite (8/8), security fix for UNC/WebDAV paths in project files + ffmpeg `-protocol_whitelist file`.
+M1 is feature-complete on `main` (pushed): editing core, media (probe/index/MF decode/proxies, rotation, EXIF, A/V offset, streamed audio), renderer (identity grade stage, titles, NV12 out, orientation), playback (cpal + null sink), export (MF QSV/AMF/NVENC/software, presets, loudness + true-peak limiter, zero-copy pipelined), UI (welcome, editor, timeline, keymaps, export dialog, About, own Editelier logo), xtask + MSIX packaging (dev-signed), debug agent channel + off-screen WebdriverIO suite (9/9, incl. export via the UI button), security fix for UNC/WebDAV paths in project files + ffmpeg `-protocol_whitelist file`.
 
 ## Next (in order) to finish M1 and tag v0.1.0
 1. **Own LGPLv2.1 FFmpeg build** (`packaging/ffmpeg-build.md`, `build-ffmpeg.sh`: no `--enable-version3`, `--disable-network`, h264/hevc/aac software codecs disabled). Needs Docker or WSL2; check which exists, else MSYS2. Then A-LEGAL-01 must pass.
 2. **MSIX install checks** A-MSIX-02..04 (blocked until the owner trusts the dev cert; see NEEDS-VIN).
-3. **Export through the UI in e2e**: native folder picker can't be driven; add an agent method or a debug-only default export folder so the UI export button path is tested.
+3. ~~Export through the UI in e2e~~ done (`m1-e2e-ui-export`): debug + `agent` builds with `EDITELIER_AGENT=1` answer the folder picker with `EDITELIER_TEST_EXPORT_DIR` (compiled out of release; unit test checks both); e2e 9/9.
 4. **Acceptance run** `cargo xtask accept --milestone m1` on an idle laptop; fill gaps marked "not yet automated" (A-UI ids, A-PERF 60 s budgets, A-CUT FFV1 lossless path via FFmpeg helper).
 5. **Usability walkthroughs** (first-time user; Premiere switcher) via the agent channel + screenshots; fix what confuses. Then `simplify` + `code-review` (low), `design-review` on headless screenshots, `docs/LEGAL-REVIEW.md` checklist.
 6. Add Windows CI (D16), tag `v0.1.0`, GitHub Release with the dev MSIX + cert instructions + portable zip.
