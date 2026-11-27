@@ -294,7 +294,7 @@
     <p class="muted" id="sc-empty" hidden>No shortcut matches that search.</p>
   </dialog>
 
-  <dialog id="about-dialog" class="hs-dialog dlg" aria-labelledby="h-about">
+  <dialog id="about-dialog" class="hs-dialog dlg dlg--wide" aria-labelledby="h-about">
     <div class="dlg__head">
       <h1 id="h-about">About Editelier</h1>
       <button type="button" class="dlg__close" data-close aria-label="Close"><span class="hs-icon i-close" aria-hidden="true"></span></button>
@@ -303,11 +303,10 @@
       <img class="hs-brand-dark about__logo" src="./src/brand/wordmark-dark.svg" alt="" width="275" height="64">
       <img class="hs-brand-light about__logo" src="./src/brand/wordmark-light.svg" alt="" width="275" height="64">
       <p>Version <span id="about-version" class="mono"></span></p>
-      <p>Designed and built by Vin, <a href="https://vwesley.dev" target="_blank" rel="noopener noreferrer">Vin's Atelier</a>.</p>
-      <p>Vin's Atelier logo by Portus Workstation: <a href="https://www.instagram.com/portus_workstation/" target="_blank" rel="noopener noreferrer">@portus_workstation</a> and <a href="https://www.instagram.com/wason25_pz/" target="_blank" rel="noopener noreferrer">@wason25_pz</a> on Instagram.</p>
       <p><strong>Private by design.</strong> Nothing leaves your device: no account, no upload, no tracking.</p>
       <p class="about__legal">This software uses libraries from the <a href="https://ffmpeg.org" target="_blank" rel="noopener noreferrer">FFmpeg</a> project under the <a href="https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html" target="_blank" rel="noopener noreferrer">LGPLv2.1</a>. Its source code and build settings are on the <a href="https://github.com/vincentwesley/editelier/releases" target="_blank" rel="noopener noreferrer">releases page</a>. FFmpeg is a trademark of Fabrice Bellard.</p>
-      <p class="about__legal"><a href="https://github.com/vincentwesley/editelier/blob/main/THIRD_PARTY_NOTICES.md" target="_blank" rel="noopener noreferrer">Third-party notices</a> · Copyright 2026 Vin's Atelier.</p>
+      <p class="about__legal"><a href="https://github.com/vincentwesley/editelier/blob/main/THIRD_PARTY_NOTICES.md" target="_blank" rel="noopener noreferrer">Third-party notices</a></p>
+      <!-- The Welcome footer's credits card (section.creator) moves in here while About is open (dialogs.ts). -->
     </div>
   </dialog>
 
