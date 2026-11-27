@@ -443,18 +443,13 @@ enum Act {
     Legal01,
     Legal04,
     Legal05,
+    /// `--measure` with 60 s phases; per-id verdict from its table.
+    Measure60,
+    /// `export_bench` (60 s timelines); per-id verdict from its BENCH lines.
+    ExportBench,
+    /// Off-screen real-app WebdriverIO suite (`e2e-app/`); per-id verdict from tagged test titles.
+    E2e,
 }
-
-const MEASURE: Act = Act::Cargo(&[
-    "run",
-    "--release",
-    "-p",
-    "editelier",
-    "--features",
-    "custom-protocol",
-    "--",
-    "--measure",
-]);
 const QUALITY: Act = Act::Cargo(&[
     "test",
     "--release",
@@ -471,6 +466,43 @@ const QUALITY: Act = Act::Cargo(&[
 fn plan(id: &str) -> Option<(Vec<Act>, &'static str)> {
     use Act::*;
     let core = |t: &'static [&'static str]| Cargo(t);
+    // Lossless path: model cut -> MF decode -> FFV1/MKV via the helper -> framemd5 vs oracle trim.
+    let lossless = |t: &'static str| {
+        Cargo(match t {
+            "01" => &[
+                "test",
+                "-p",
+                "editelier-media",
+                "--test",
+                "cut_lossless",
+                "a_cut_01",
+            ],
+            "02" => &[
+                "test",
+                "-p",
+                "editelier-media",
+                "--test",
+                "cut_lossless",
+                "a_cut_02",
+            ],
+            "03" => &[
+                "test",
+                "-p",
+                "editelier-media",
+                "--test",
+                "cut_lossless",
+                "a_cut_03",
+            ],
+            _ => &[
+                "test",
+                "-p",
+                "editelier-media",
+                "--test",
+                "cut_lossless",
+                "a_cut_04",
+            ],
+        })
+    };
     Some(match id {
         "A-CUT-01" => (
             vec![
@@ -482,29 +514,11 @@ fn plan(id: &str) -> Option<(Vec<Act>, &'static str)> {
                     "core",
                     "trims_snap_to_frames_and_clamp_to_media",
                 ]),
-                core(&[
-                    "test",
-                    "-p",
-                    "editelier-media",
-                    "--test",
-                    "media",
-                    "seek_exact_cfr",
-                ]),
+                lossless("01"),
             ],
-            "partial: model trims + decoded seeks; no framemd5 export of 20 pairs",
+            "full (720p GOP-250 fixture, 20 seeded pairs)",
         ),
         "A-CUT-02" => (
-            vec![core(&[
-                "test",
-                "-p",
-                "editelier-core",
-                "--test",
-                "core",
-                "random_splits_then_joins_round_trip",
-            ])],
-            "partial: model only",
-        ),
-        "A-CUT-03" => (
             vec![
                 core(&[
                     "test",
@@ -514,6 +528,12 @@ fn plan(id: &str) -> Option<(Vec<Act>, &'static str)> {
                     "core",
                     "random_splits_then_joins_round_trip",
                 ]),
+                lossless("02"),
+            ],
+            "full (av_offset fixture: B-frames, elst, AAC priming)",
+        ),
+        "A-CUT-03" => (
+            vec![
                 core(&[
                     "test",
                     "-p",
@@ -522,19 +542,23 @@ fn plan(id: &str) -> Option<(Vec<Act>, &'static str)> {
                     "core",
                     "join_refuses_non_contiguous_clips",
                 ]),
+                lossless("03"),
             ],
-            "partial: model only",
+            "partial: video framemd5 across the join; audio sample count not checked",
         ),
         "A-CUT-04" => (
-            vec![core(&[
-                "test",
-                "-p",
-                "editelier-core",
-                "--test",
-                "core",
-                "ripple_delete_closes_the_gap",
-            ])],
-            "partial: model only",
+            vec![
+                core(&[
+                    "test",
+                    "-p",
+                    "editelier-core",
+                    "--test",
+                    "core",
+                    "ripple_delete_closes_the_gap",
+                ]),
+                lossless("04"),
+            ],
+            "full",
         ),
         "A-CUT-05" => (
             vec![
@@ -572,9 +596,10 @@ fn plan(id: &str) -> Option<(Vec<Act>, &'static str)> {
             ])],
             "full on synthetic fixtures",
         ),
-        "A-QUAL-01" | "A-QUAL-02" | "A-PERF-03" | "A-PERF-04" => (
-            vec![QUALITY],
-            "synthetic 5 s pattern; perf ids hardware-dependent",
+        "A-QUAL-01" | "A-QUAL-02" => (vec![QUALITY], "synthetic 5 s pattern"),
+        "A-PERF-03" | "A-PERF-04" => (
+            vec![ExportBench],
+            "60 s timeline (bench20 clip x3 + title + audio), YouTube preset",
         ),
         "A-QUAL-03" => (
             vec![core(&[
@@ -619,7 +644,14 @@ fn plan(id: &str) -> Option<(Vec<Act>, &'static str)> {
             ])],
             "full",
         ),
-        "A-PERF-01" | "A-PERF-02" => (vec![MEASURE], "`--measure` bench; read its printed fps"),
+        "A-PERF-01" => (
+            vec![Measure60],
+            "partial: 60 s, uploaded fps >= 29.5; no PresentMon drop count or render p95",
+        ),
+        "A-PERF-02" => (
+            vec![Measure60],
+            "partial: 4K60 via proxy, 60 s >= 30 fps; no HEVC source",
+        ),
         "A-IMPORT-01" => (
             vec![core(&[
                 "test",
@@ -642,10 +674,21 @@ fn plan(id: &str) -> Option<(Vec<Act>, &'static str)> {
             ])],
             "partial",
         ),
-        "A-UI-05" => (
-            vec![Npm(&["run", "test:e2e"])],
-            "partial: axe in headless Chromium against Vite, not WebView2",
+        "A-UI-01" => (vec![E2e], "full (Short and YouTube paths)"),
+        "A-UI-02" => (
+            vec![E2e],
+            "partial: import, split, title, music, export probed; no ripple delete/fade/5 checkpoint hashes",
         ),
+        "A-UI-03" => (vec![E2e], "full"),
+        "A-UI-04" => (
+            vec![E2e],
+            "partial: keys + toolbar buttons; no menu or History panel in M1",
+        ),
+        "A-UI-05" => (
+            vec![Npm(&["run", "test:e2e"]), E2e],
+            "partial: WebView2 axe on welcome/editor (both themes), shortcuts, export, About (dark); no settings dialog in M1",
+        ),
+        "A-UI-06" => (vec![E2e], "full"),
         "A-MSIX-01" => (vec![ManifestLint], "full except 'version bumped'"),
         "A-MSIX-02" | "A-MSIX-04" => (vec![Msix], "full"),
         "A-MSIX-03" => (
@@ -691,7 +734,7 @@ fn accept(args: &[String]) -> R {
     };
     let dir = root().join("qa-output/accept");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let mut done: HashMap<Act, Result<(), String>> = HashMap::new();
+    let mut done: HashMap<Act, R<String>> = HashMap::new();
     let (mut fails, mut todo) = (Vec::new(), Vec::new());
     for id in &ids {
         let Some((acts, cover)) = plan(id) else {
@@ -706,7 +749,7 @@ fn accept(args: &[String]) -> R {
         let mut err = None;
         for a in acts {
             let r = done.entry(a).or_insert_with(|| act(a)).clone();
-            if let Err(e) = r {
+            if let Err(e) = r.and_then(|log| verdict(id, a, &log)) {
                 err = Some(e);
             }
         }
@@ -735,10 +778,174 @@ fn accept(args: &[String]) -> R {
     }
 }
 
-fn act(a: Act) -> R {
+/// Runs `cmd`, echoing and returning stdout + stderr whatever the exit status (the per-id
+/// verdict reads the log); Err only when it can't start.
+fn capture(cmd: &mut Command) -> R<String> {
+    eprintln!("$ {cmd:?}");
+    let o = cmd
+        .output()
+        .map_err(|e| format!("{:?}: {e}", cmd.get_program()))?;
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    println!("{log}");
+    Ok(log)
+}
+
+/// PIDs of the processes the off-screen e2e can leave behind.
+fn e2e_pids() -> HashSet<u32> {
+    let mut pids = HashSet::new();
+    for exe in ["tauri-driver.exe", "msedgedriver.exe", "editelier.exe"] {
+        let Ok(o) = Command::new("tasklist")
+            .args(["/FO", "CSV", "/NH", "/FI", &format!("IMAGENAME eq {exe}")])
+            .output()
+        else {
+            continue;
+        };
+        pids.extend(
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter_map(|l| l.split("\",\"").nth(1)?.parse::<u32>().ok()),
+        );
+    }
+    pids
+}
+
+/// Ensures `npm ci --ignore-scripts` ran in `dir` (worktrees start without node_modules).
+fn npm_ci(dir: &Path) -> R {
+    if dir.join("node_modules").is_dir() {
+        return Ok(());
+    }
+    run(npm().current_dir(dir).args(["ci", "--ignore-scripts"]))
+}
+
+fn e2e() -> R<String> {
+    let root = root();
+    npm_ci(&root.join("ui"))?;
+    run(npm().args(["run", "build"]))?;
+    run(cargo().args([
+        "build",
+        "-p",
+        "editelier",
+        "--features",
+        "agent,custom-protocol",
+    ]))?;
+    let dir = root.join("e2e-app");
+    npm_ci(&dir)?;
+    let before = e2e_pids();
+    let log = capture(npm().current_dir(&dir).arg("test"));
+    // tauri-driver / msedgedriver (and a stuck app) can outlive the run: stop only the new PIDs.
+    for pid in e2e_pids().difference(&before) {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .output();
+    }
+    log
+}
+
+/// Per-id verdict from a shared log (bench tables, tagged e2e titles); other acts pass as run.
+fn verdict(id: &str, a: Act, log: &str) -> R {
+    let num = |s: Option<&str>| s.and_then(|s| s.trim().parse::<f64>().ok());
+    match a {
+        Act::Measure60 => {
+            let (row, min) = match id {
+                "A-PERF-01" => ("1080p30 original", 29.5),
+                _ => ("4K60 via proxy", 30.0),
+            };
+            // Columns after the phase name: secs, video fps, ...
+            let fps = log
+                .lines()
+                .find_map(|l| l.strip_prefix(row))
+                .and_then(|r| num(r.split_whitespace().nth(1)))
+                .ok_or(format!("no `{row}` row in the --measure output"))?;
+            if fps >= min {
+                Ok(())
+            } else {
+                Err(format!("{row}: {fps:.1} fps < {min}"))
+            }
+        }
+        Act::ExportBench => {
+            let (clip, budget) = match id {
+                "A-PERF-03" => ("bench20_1080p30.mp4", 30.0),
+                _ => ("bench20_2160p30.mp4", 80.0),
+            };
+            let line = log
+                .lines()
+                .find(|l| l.contains(&format!("BENCH {clip}:")))
+                .ok_or(format!(
+                    "no BENCH line for {clip} (fixture or GPU missing?)"
+                ))?;
+            let secs = num(line
+                .split("frames in ")
+                .nth(1)
+                .and_then(|r| r.split(" s").next()))
+            .ok_or(format!("unreadable: {line}"))?;
+            if secs <= budget {
+                Ok(())
+            } else {
+                Err(format!("{clip}: {secs:.1} s > {budget} s ({line})"))
+            }
+        }
+        Act::E2e => {
+            let tagged = |mark: &str| {
+                log.lines()
+                    .filter(|l| l.contains(mark) && l.contains(id))
+                    .map(str::trim)
+                    .collect::<Vec<_>>()
+            };
+            let failed = tagged("✖");
+            if !failed.is_empty() {
+                Err(format!("e2e failed: {}", failed.join(" | ")))
+            } else if tagged("✓").is_empty() {
+                Err("no passing e2e test tagged with this id (suite did not run?)".into())
+            } else {
+                Ok(())
+            }
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Log-producing acts return their output; the rest an empty log.
+fn act(a: Act) -> R<String> {
+    match a {
+        Act::Measure60 => capture(
+            cargo()
+                .args([
+                    "run",
+                    "--release",
+                    "-p",
+                    "editelier",
+                    "--features",
+                    "custom-protocol",
+                    "--",
+                    "--measure",
+                ])
+                .env("EDITELIER_MEASURE_SECS", "60"),
+        ),
+        Act::ExportBench => capture(cargo().args([
+            "test",
+            "--release",
+            "-p",
+            "editelier",
+            "export_bench",
+            "--",
+            "--ignored",
+            "--test-threads=1",
+            "--nocapture",
+        ])),
+        Act::E2e => e2e(),
+        other => act_checks(other).map(|()| String::new()),
+    }
+}
+
+fn act_checks(a: Act) -> R {
     match a {
         Act::Cargo(args) => run(cargo().args(args)),
         Act::Npm(args) => run(npm().args(args)),
+        Act::Measure60 | Act::ExportBench | Act::E2e => unreachable!("log acts run in act()"),
         Act::ManifestLint => lint_manifest(&manifest()?),
         Act::Msix => {
             let msix = root().join(format!("target/msix/Editelier_{}_x64.msix", version()?));
@@ -876,6 +1083,20 @@ mod tests {
     fn dev_manifest_passes_lint() {
         lint_manifest(&manifest().unwrap()).unwrap();
         assert!(lint_manifest("<Package/>").is_err());
+    }
+
+    #[test]
+    fn verdicts_read_the_logs() {
+        let m = "phase secs video fps\n1080p30 original    60.0      29.9\n4K60 via proxy    60.0      28.0\n";
+        assert!(verdict("A-PERF-01", Act::Measure60, m).is_ok());
+        assert!(verdict("A-PERF-02", Act::Measure60, m).is_err());
+        let b = "BENCH bench20_1080p30.mp4: 1800 frames in 12.50 s = 4.80x realtime on QSV\n";
+        assert!(verdict("A-PERF-03", Act::ExportBench, b).is_ok());
+        assert!(verdict("A-PERF-04", Act::ExportBench, b).is_err());
+        let e = "  ✓ A-UI-01 A-UI-05: welcome\n  ✖ A-UI-05 A-UI-06: About\n";
+        assert!(verdict("A-UI-01", Act::E2e, e).is_ok());
+        assert!(verdict("A-UI-06", Act::E2e, e).is_err());
+        assert!(verdict("A-UI-03", Act::E2e, e).is_err());
     }
 
     #[test]

@@ -26,6 +26,9 @@ function Make([string]$name, [string[]]$a) {
 # 1080p30 H.264 (GOP 60, B-frames) + AAC, burned frame numbers
 Make 'cfr30_1080p_h264_aac.mp4' (@('-f', 'lavfi', '-i', "testsrc2=size=1920x1080:rate=30:duration=4,$sdr") + $tone +
   @('-t', '4') + $x264 + @('-g', '60', '-bf', '2') + $aac + @('-movflags', '+faststart'))
+# A-CUT-01: long GOP (250) with B-frames, 10 s
+Make 'cfr30_longgop_720p_h264.mp4' (@('-f', 'lavfi', '-i', "testsrc2=size=1280x720:rate=30:duration=10,$sdr") +
+  @('-t', '10') + $x264 + @('-g', '250', '-keyint_min', '250', '-sc_threshold', '0', '-bf', '2'))
 Make 'ntsc2997_720p_h264.mp4' (@('-f', 'lavfi', '-i', "testsrc2=size=1280x720:rate=30000/1001:duration=3,$sdr") + $tone +
   @('-t', '3') + $x264 + @('-g', '30') + $aac)
 Make 'ntsc5994_720p_h264.mp4' (@('-f', 'lavfi', '-i', "testsrc2=size=1280x720:rate=60000/1001:duration=3,$sdr") + $tone +
