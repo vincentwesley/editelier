@@ -2,8 +2,8 @@
 
 use super::{GpuFrame, err, init};
 use crate::{
-    AudioBuffer, AudioStream, Error, Frame, FrameData, HNS, Index, PixelFormat, Rational, Result,
-    Tools, VideoStream,
+    AudioBuffer, AudioStream, Error, Frame, FrameData, HNS, Hdr, Index, PixelFormat, ProbeInfo,
+    Rational, Result, Tools, VideoStream,
 };
 use std::path::{Path, PathBuf};
 use windows::Win32::Graphics::Direct3D11::{
@@ -162,6 +162,116 @@ fn read(reader: &IMFSourceReader, stream: u32) -> Result<Option<(i64, IMFSample)
             return Ok(None);
         }
     }
+}
+
+/// Fills bit depth (`pix_fmt`) and colour of the first H.264/HEVC video stream from Media
+/// Foundation's native media type (container + codec config: no decode, no HEVC extension) where
+/// ffprobe left them unknown: the shipped LGPL ffprobe has no H.264/HEVC decoder or parser (D3,
+/// D23). Best effort: whatever MF can't tell stays `None`.
+pub(crate) fn fill_native(info: &mut ProbeInfo) {
+    let Some(v) = info.video.first_mut() else {
+        return;
+    };
+    let hevc = match v.codec.as_str() {
+        "hevc" => true,
+        "h264" => false,
+        _ => return,
+    };
+    let c = &v.color;
+    if v.pix_fmt.is_some()
+        && c.primaries.is_some()
+        && c.transfer.is_some()
+        && c.matrix.is_some()
+        && c.range.is_some()
+    {
+        return;
+    }
+    let Ok(t) = open_reader(&info.path, None, VIDEO)
+        .and_then(|(r, _)| unsafe { r.GetNativeMediaType(VIDEO, 0) }.map_err(err("native type")))
+    else {
+        return;
+    };
+    let get = |k: &GUID| unsafe { t.GetUINT32(k) }.ok();
+    let n = native_names(
+        hevc,
+        get(&MF_MT_VIDEO_PROFILE),
+        [
+            get(&MF_MT_VIDEO_PRIMARIES),
+            get(&MF_MT_TRANSFER_FUNCTION),
+            get(&MF_MT_YUV_MATRIX),
+            get(&MF_MT_VIDEO_NOMINAL_RANGE),
+        ],
+    );
+    let fill = |f: &mut Option<String>, s: Option<&str>| {
+        if f.is_none() {
+            *f = s.map(str::to_owned);
+        }
+    };
+    fill(&mut v.pix_fmt, n[0]);
+    let c = &mut v.color;
+    fill(&mut c.primaries, n[1]);
+    fill(&mut c.transfer, n[2]);
+    fill(&mut c.matrix, n[3]);
+    fill(&mut c.range, n[4]);
+    c.hdr = c.hdr.or(match c.transfer.as_deref() {
+        Some("arib-std-b67") => Some(Hdr::Hlg),
+        Some("smpte2084") => Some(Hdr::Pq),
+        _ => None,
+    });
+}
+
+/// MF values (`MF_MT_VIDEO_PROFILE`, then `[primaries, transfer, matrix, range]`) -> FFmpeg names
+/// `[pix_fmt, primaries, transfer, matrix, range]`. Unknown or ambiguous values (DCI-P3 primaries,
+/// 4:2:2/4:4:4 or 12-bit profiles) map to `None`.
+fn native_names(
+    hevc: bool,
+    profile: Option<u32>,
+    [pri, trc, mat, rng]: [Option<u32>; 4],
+) -> [Option<&'static str>; 5] {
+    let i = |x: Option<u32>| x.map(|x| x as i32).unwrap_or(-1);
+    let pix = match (hevc, i(profile)) {
+        (true, 1 | 11 | 20) => Some("yuv420p"), // Main, MainIntra 8, MainStill
+        (true, 2 | 12) => Some("yuv420p10le"),  // Main 10, MainIntra 10
+        (false, 66 | 77 | 88 | 100 | 256 | 257) => Some("yuv420p"),
+        (false, 110) => Some("yuv420p10le"), // High 10
+        _ => None,
+    };
+    let primaries = match i(pri) {
+        x if x == MFVideoPrimaries_BT709.0 => Some("bt709"),
+        x if x == MFVideoPrimaries_BT470_2_SysM.0 => Some("bt470m"),
+        x if x == MFVideoPrimaries_BT470_2_SysBG.0 => Some("bt470bg"),
+        x if x == MFVideoPrimaries_SMPTE170M.0 => Some("smpte170m"),
+        x if x == MFVideoPrimaries_SMPTE240M.0 => Some("smpte240m"),
+        x if x == MFVideoPrimaries_BT2020.0 => Some("bt2020"),
+        _ => None,
+    };
+    let transfer = match i(trc) {
+        x if x == MFVideoTransFunc_709.0 => Some("bt709"),
+        x if x == MFVideoTransFunc_240M.0 => Some("smpte240m"),
+        x if x == MFVideoTransFunc_sRGB.0 => Some("iec61966-2-1"),
+        x if x == MFVideoTransFunc_22.0 => Some("gamma22"),
+        x if x == MFVideoTransFunc_28.0 => Some("gamma28"),
+        x if x == MFVideoTransFunc_10.0 => Some("linear"),
+        x if x == MFVideoTransFunc_2020.0 => Some("bt2020-10"),
+        x if x == MFVideoTransFunc_2084.0 => Some("smpte2084"),
+        x if x == MFVideoTransFunc_HLG.0 => Some("arib-std-b67"),
+        _ => None,
+    };
+    let matrix = match i(mat) {
+        x if x == MFVideoTransferMatrix_BT709.0 => Some("bt709"),
+        x if x == MFVideoTransferMatrix_BT601.0 => Some("smpte170m"),
+        x if x == MFVideoTransferMatrix_SMPTE240M.0 => Some("smpte240m"),
+        x if x == MFVideoTransferMatrix_BT2020_10.0 || x == MFVideoTransferMatrix_BT2020_12.0 => {
+            Some("bt2020nc")
+        }
+        _ => None,
+    };
+    let range = match i(rng) {
+        x if x == MFNominalRange_16_235.0 => Some("tv"),
+        x if x == MFNominalRange_0_255.0 => Some("pc"),
+        _ => None,
+    };
+    [pix, primaries, transfer, matrix, range]
 }
 
 /// Frame-exact video decoder for one file. Not `Send`: keep it on the thread that opened it.

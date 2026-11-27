@@ -32,6 +32,7 @@ M1 is feature-complete on `main` (pushed): editing core, media (probe/index/MF d
 ## Known gaps
 - 10-bit (P010) frames still go through the CPU on the zero-copy path.
 - HDR (HLG/PQ) not tone-mapped yet (M2). Video flips from display matrix not handled (rotation is). HEIC untested (no local encoder).
+- Shipped ffprobe can't read H.264/HEVC bitstreams; MF fills bit depth + colour for the first video stream only (D23). 4:2:2/4:4:4/12-bit profiles and DCI-P3 primaries stay unknown.
 - MF limits: no B-frames, AAC max 192 kbps, moov relocation ≤ 4 GiB, no lossless H.264.
 - 150% DPI untested; live drag-resize flicker not eyeballed.
 - `e2e-app` npm audit: high findings only via `extract-zip` (puppeteer download, dev-only, unused).

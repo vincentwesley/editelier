@@ -40,7 +40,8 @@ impl Tools {
     }
 
     /// `EDITELIER_FFMPEG_DIR`, then beside the running exe, then (debug builds) the repo's
-    /// `third_party/ffmpeg/bin` from `scripts/fetch-ffmpeg.ps1`.
+    /// shipped build `third_party/ffmpeg-lgpl/bin` (packaging/build-ffmpeg.sh) so dev matches
+    /// release, then the dev build `third_party/ffmpeg/bin` from `scripts/fetch-ffmpeg.ps1`.
     pub fn locate() -> Result<Self> {
         let mut dirs: Vec<PathBuf> = Vec::new();
         if let Some(d) = std::env::var_os("EDITELIER_FFMPEG_DIR") {
@@ -53,7 +54,11 @@ impl Tools {
             dirs.push(d);
         }
         #[cfg(debug_assertions)]
-        dirs.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../third_party/ffmpeg/bin"));
+        for d in ["ffmpeg-lgpl", "ffmpeg"] {
+            dirs.push(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../third_party/{d}/bin")),
+            );
+        }
         dirs.into_iter()
             .map(|d| Self::in_dir(&d))
             .find(|t| t.ffprobe.is_file() && t.ffmpeg.is_file())

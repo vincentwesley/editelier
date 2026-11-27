@@ -124,6 +124,7 @@ fn probe_corpus() {
                 );
                 assert!((info.duration_us.unwrap() - 4_000_000).abs() < 50_000);
                 assert_eq!(v.color.matrix.as_deref(), Some("bt709"));
+                assert_eq!(v.pix_fmt.as_deref(), Some("yuv420p"));
                 assert_eq!(info.audio[0].sample_rate, 48_000);
             }
             "ntsc2997_720p_h264.mp4" => assert_eq!(v.unwrap().r_fps, fps(30000, 1001)),
@@ -133,8 +134,15 @@ fn probe_corpus() {
             }
             "vfr_jitter_720p_h264.mp4" => assert!(v.unwrap().vfr),
             "hlg10_720p_hevc.mp4" => {
-                assert_eq!(v.unwrap().color.hdr, Some(Hdr::Hlg));
-                assert_eq!(v.unwrap().codec, "hevc");
+                let v = v.unwrap();
+                assert_eq!(v.color.hdr, Some(Hdr::Hlg));
+                assert_eq!(v.codec, "hevc");
+                assert_eq!(v.pix_fmt.as_deref(), Some("yuv420p10le"));
+                assert_eq!(
+                    (v.color.primaries.as_deref(), v.color.matrix.as_deref()),
+                    (Some("bt2020"), Some("bt2020nc"))
+                );
+                assert_eq!(v.color.range.as_deref(), Some("tv"));
             }
             "rot90_h264.mov" => assert_eq!(v.unwrap().rotation, 90),
             "vp9_opus_360p.mkv" => {
