@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
+  pull_request:
+    paths-ignore: ['**.md', 'docs/**']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  EDITELIER_AUDIO: 'null'
+
+jobs:
+  check:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Identity check (only vincentwesley commits)
+        run: |
+          bad=$(git log --format='%an|%ae|%cn|%ce' | tr '|' '\n' | sort -u | grep -vE '^(vincentwesley|Vincent Wesley|GitHub|github-actions\[bot\]|dependabot\[bot\]|221810966\+vincentwesley@users\.noreply\.github\.com|noreply@github\.com|[0-9]+\+(github-actions|dependabot)\[bot\]@users\.noreply\.github\.com)$' || true)
+          if [ -n "$bad" ]; then echo "Unexpected commit identities:"; echo "$bad"; exit 1; fi
+      - name: Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustc --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: ui
+      # UI first: tauri's generate_context! needs ui/dist to compile src-tauri.
+      - run: npm run check
+        working-directory: ui
+      - run: npm run build
+        working-directory: ui
+      # Equivalent of `cargo xtask check` + `cargo xtask layers`, with hardware tests skipped.
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo xtask layers
+      # Tests needing media, the FFmpeg helper or an oracle ffmpeg skip themselves. The runner has
+      # no GPU (WARP only) and no Media Foundation feature, so MF-encoder and GPU render tests are skipped.
+      - name: cargo test (no GPU / Media Foundation)
+        run: >
+          cargo test --workspace --
+          --skip enumerates_and_reports_hevc
+          --skip every_encoder_writes_conformant_mp4
+          --skip hevc_encodes_when_present
+          --skip zero_copy_texture_input
+          --skip cancel_and_error_remove_partial_file
+          --skip neutral_grade_round_trips
+          --skip title_golden_frame
+          --skip letterbox_keeps_bars_black
+          --skip orientation_turns_the_clip_upright
