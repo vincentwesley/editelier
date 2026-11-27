@@ -210,7 +210,11 @@ pub fn probe(tools: &Tools, path: &Path) -> Result<ProbeInfo> {
         #[cfg(not(windows))]
         return Err(Error::Unsupported("still images need Windows (WIC)".into()));
     }
-    ffmpeg::probe(tools, path)
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut info = ffmpeg::probe(tools, path)?;
+    #[cfg(windows)]
+    win::mf::fill_native(&mut info);
+    Ok(info)
 }
 
 /// True when D4 says to make a proxy: larger than 1080p, keyframes further apart than 1 s, or VFR.
