@@ -107,6 +107,11 @@ export function openShortcuts(): void {
 
 export function initDialogs(): void {
   $("#about-version").textContent = version;
+  // One credits card (D13): it lives in the Welcome footer and moves into About while About is open, so ids, radios and the logo drag stay single.
+  const about = dlg("about-dialog");
+  const credits = $(".creator");
+  const home = credits.parentElement!;
+  about.addEventListener("toggle", (e) => ((e as ToggleEvent).newState === "open" ? $(".about", about) : home).append(credits));
   document.addEventListener("click", (e) => {
     const t = e.target as HTMLElement;
     const open = t.closest<HTMLElement>("[data-open]");
