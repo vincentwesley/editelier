@@ -11,6 +11,12 @@ updates:
       - { dependency-name: "@types/node", update-types: ["version-update:semver-major"] }
     groups:
       minor-and-patch: { update-types: [minor, patch] }
+  - package-ecosystem: npm
+    directory: /e2e-app
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch: { update-types: [minor, patch] }
   - package-ecosystem: cargo
     directory: /
     schedule: { interval: monthly }
