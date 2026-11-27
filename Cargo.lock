@@ -1027,6 +1027,7 @@ dependencies = [
 name = "editelier-media"
 version = "0.1.0"
 dependencies = [
+ "editelier-core",
  "rubato",
  "serde_json",
  "windows",
