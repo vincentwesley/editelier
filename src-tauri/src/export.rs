@@ -512,15 +512,17 @@ mod tests {
         check(150, &a, 15);
     }
 
-    /// A-PERF-03/04 bench: a 20 s timeline of `test-media/bench20_{1080p,2160p}30.mp4` (one clip,
-    /// a title, its own audio) exported with the YouTube preset. `cargo test --release -p
-    /// editelier -- --ignored export_bench --test-threads=1 --nocapture`.
+    /// A-PERF-03/04 bench: a 60 s timeline of `test-media/bench20_{1080p,2160p}30.mp4` (the clip
+    /// three times, a title, its own audio) exported with the YouTube preset; budgets 30 s (1080p)
+    /// and 80 s (4K). `cargo test --release -p editelier -- --ignored export_bench
+    /// --test-threads=1 --nocapture` (also `cargo xtask accept A-PERF-03`).
     #[test]
     #[ignore = "perf bench; needs the bench20 clips (see docs/next-session.md)"]
     fn export_bench() {
-        for (name, ui, (w, h)) in [
-            ("bench20_1080p30.mp4", "youtube-1080", (1920, 1080)),
-            ("bench20_2160p30.mp4", "youtube-4k", (3840, 2160)),
+        let mut over = Vec::new();
+        for (name, ui, (w, h), budget) in [
+            ("bench20_1080p30.mp4", "youtube-1080", (1920, 1080), 30.0),
+            ("bench20_2160p30.mp4", "youtube-4k", (3840, 2160), 80.0),
         ] {
             let src = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../test-media")
@@ -560,8 +562,10 @@ mod tests {
                 None,
             );
             core.import(None, &[src.display().to_string()]).unwrap();
-            core.run_command("timeline.append", &json!({"media_id": "1"}))
-                .unwrap();
+            for _ in 0..3 {
+                core.run_command("timeline.append", &json!({"media_id": "1"}))
+                    .unwrap();
+            }
             core.run_command(
                 "title.add",
                 &json!({"start": 0, "duration": fps.tick_of(300).0, "text": "Editelier"}),
@@ -573,7 +577,7 @@ mod tests {
                 project: project.clone(),
                 preset: preset_for(ui, &project).unwrap(),
                 path: tmp.join("bench.mp4"),
-                range: (Tick::ZERO, fps.tick_of(600)),
+                range: (Tick::ZERO, fps.tick_of(1800)),
                 cancel: CancelToken::default(),
             };
             let done = run_job(job, tools, &gpu);
@@ -581,11 +585,15 @@ mod tests {
                 "BENCH {name}: {} frames in {:.2} s = {:.2}x realtime on {}",
                 done.frames,
                 done.seconds,
-                20.0 / done.seconds,
+                60.0 / done.seconds,
                 done.encoder
             );
-            assert_eq!(done.frames, 600);
+            assert_eq!(done.frames, 1800);
+            if done.seconds > budget {
+                over.push(format!("{name}: {:.1} s > {budget} s", done.seconds));
+            }
         }
+        assert!(over.is_empty(), "over budget: {over:?}");
     }
 
     /// Preview throughput bench (headless): decode + upload + compose + output transform for

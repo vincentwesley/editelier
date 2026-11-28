@@ -2,6 +2,7 @@
 //! Phase 1: a 1080p30 H.264 timeline from the originals for 10 s. Phase 2: a 4K60 H.264 clip on a
 //! 60 fps timeline through its auto proxy for 20 s (A-PERF-02 asks ≥ 30 fps). Media come from
 //! `scripts/make-test-media.ps1` (`test-media/`), or `EDITELIER_MEASURE_DIR`.
+//! `EDITELIER_MEASURE_SECS=60` plays each phase that long (A-PERF-01/02, `cargo xtask accept`).
 
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -107,8 +108,16 @@ pub fn run(app: &AppHandle) -> bool {
         "dec p95",
         "cpu%"
     );
+    let secs_or = |quick: f64| {
+        std::env::var("EDITELIER_MEASURE_SECS")
+            .ok()
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(quick)
+    };
+    // `clip_secs`: fixture length; enough copies go on the timeline to outlast the phase.
     let phase =
-        |name: &str, file: &str, fps: FrameRate, copies: usize, secs: f64, proxies: bool| {
+        |name: &str, file: &str, fps: FrameRate, clip_secs: f64, secs: f64, proxies: bool| {
+            let copies = (secs / clip_secs).ceil() as usize + 1;
             let path = dir.join(file);
             if !path.is_file() {
                 println!(
@@ -193,8 +202,8 @@ pub fn run(app: &AppHandle) -> bool {
         "1080p30 original",
         "cfr30_1080p_h264_aac.mp4",
         FrameRate::FPS_30,
-        3,
-        10.0,
+        4.0,
+        secs_or(10.0),
         false,
     ) {
         ok &= f >= 27.0;
@@ -203,8 +212,8 @@ pub fn run(app: &AppHandle) -> bool {
         "4K60 via proxy",
         "uhd60_h264.mp4",
         FrameRate::FPS_60,
-        7,
-        20.0,
+        3.0,
+        secs_or(20.0),
         true,
     ) {
         ok &= f >= 30.0;

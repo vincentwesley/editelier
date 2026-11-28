@@ -67,7 +67,7 @@ describe("Editelier real app", () => {
   });
   after(() => agent?.close());
 
-  it("A-UI-01: welcome -> YouTube video -> editor (axe both themes)", async () => {
+  it("A-UI-01 A-UI-05: welcome -> YouTube video -> editor (axe both themes)", async () => {
     await expect($("#welcome")).toBeDisplayed();
     // Off-screen: never pops up on the owner's desktop.
     expect(await browser.execute(() => window.screenX)).toBeLessThan(-10_000);
@@ -82,7 +82,7 @@ describe("Editelier real app", () => {
     await bothThemes("editor");
   });
 
-  it("imports three clips and appends them via the UI", async () => {
+  it("A-UI-02: imports three clips and appends them via the UI", async () => {
     const files = ["a.mp4", "b.mp4", "c.mp4", "tone.wav"].map((f) => join(MEDIA, f));
     await agent.call("import_media", { paths: files });
     await until(async () => (await $$("#bin-list > li")).length === 4, "4 media in the bin", 60_000);
@@ -90,7 +90,7 @@ describe("Editelier real app", () => {
     await until(async () => (await tl()).main.length === 3, "3 clips on the timeline");
   });
 
-  it("preview frame changes after a seek (frame_hash)", async () => {
+  it("A-UI-02: preview frame changes after a seek (frame_hash)", async () => {
     const main = (await tl()).main;
     const len = main[0].source_out - main[0].source_in;
     await seek(0);
@@ -103,7 +103,7 @@ describe("Editelier real app", () => {
     expect((await agent.call("frame_hash")).hash).toBe(a.hash);
   });
 
-  it("splits at the playhead with S, then undo/redo by keys and buttons", async () => {
+  it("A-UI-02 A-UI-04: splits at the playhead with S, then undo/redo by keys and buttons", async () => {
     const main = (await tl()).main;
     await seek((main[0].source_out - main[0].source_in) / 2);
     await until(async () => (await $("#timecode").getText()) !== "00:00:00;00", "UI playhead moved");
@@ -119,14 +119,14 @@ describe("Editelier real app", () => {
     await until(async () => (await tl()).main.length === 4, "Redo button -> 4");
   });
 
-  it("adds a title and music via the UI", async () => {
+  it("A-UI-02: adds a title and music via the UI", async () => {
     await $('button[data-action="addTitle"]').click();
     await until(async () => (await tl()).titles.length === 1, "title added");
     await $('button[aria-label="Add tone.wav to the timeline"]').click();
     await until(async () => (await tl()).music.length === 1, "music added");
   });
 
-  it("keyboard shortcuts: ? sheet, Ctrl+T title, Escape", async () => {
+  it("A-UI-04 A-UI-05: keyboard shortcuts: ? sheet, Ctrl+T title, Escape", async () => {
     await key("Shift", "?");
     await expect($("#shortcuts-dialog")).toBeDisplayed();
     await axe("shortcuts");
@@ -138,7 +138,7 @@ describe("Editelier real app", () => {
     await until(async () => (await tl()).titles.length === 1, "undo title");
   });
 
-  it("exports 1080p to a temp folder and the file probes right", async () => {
+  it("A-UI-02 A-UI-05: exports 1080p to a temp folder and the file probes right", async () => {
     await $('button[data-action="export"]').click();
     await expect($("#export-dialog")).toBeDisplayed();
     await axe("export");
@@ -154,7 +154,7 @@ describe("Editelier real app", () => {
     probe1080(st.path);
   });
 
-  it("exports through the UI: Choose folder, Export button, file probes right", async () => {
+  it("A-UI-02: exports through the UI: Choose folder, Export button, file probes right", async () => {
     await $('button[data-action="export"]').click();
     await expect($("#export-dialog")).toBeDisplayed();
     await $('input[name="preset"][value="youtube-1080"]').click();
