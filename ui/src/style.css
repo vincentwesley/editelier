@@ -83,6 +83,17 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 0.35em; font-size: 0.8
 .recent__name { font-weight: 600; }
 .recent__path { font-size: 0.75rem; overflow-wrap: anywhere; }
 .welcome__footer { max-width: 68rem; margin: 0 auto; padding: 1rem 1rem 2rem; }
+/* Short windows (1280x720 at 100%): keep "Start editing" above the fold. */
+@media (max-height: 52rem) {
+  .top { padding-block: 0.5rem; }
+  .welcome { padding-top: 0; }
+  .welcome fieldset { margin-bottom: 1rem; }
+  .welcome legend { margin-bottom: 0.5rem; }
+  .fmt { grid-template-rows: 4.5rem auto auto; padding: 0.6rem 0.9rem; }
+  .fmt__frame { height: 4rem; }
+  .fmt__frame[data-aspect="16:9"] { width: auto; height: 3.5rem; }
+  .coming__opts { margin-top: 0; }
+}
 @media (max-width: 60rem) {
   .welcome { grid-template-columns: 1fr; gap: 1rem; }
   .formats__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -201,6 +212,9 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 0.35em; font-size: 0.8
 .preset__sum { font-size: 0.8rem; color: var(--fg-muted); }
 .preset__warn { font-size: 0.75rem; color: var(--fx-2-ink); }
 .export__file { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; }
+.export__file > *, .export__folder { min-width: 0; } /* a long picked path ellipsizes instead of widening the dialog */
+.note.export__range { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1rem; margin-top: 1rem; font-size: 0.875rem; }
+.export__range p { margin: 0; }
 .export__folder { display: flex; align-items: center; gap: 0.5rem; min-height: 2.75rem; }
 .export__folder output { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 0.85rem; }
 .export__encoder { font-size: 0.875rem; margin: 1rem 0 0; }

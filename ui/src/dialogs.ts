@@ -5,7 +5,8 @@ import type { KeymapId, PresetId } from "./api/types";
 import { $, h } from "./dom";
 import { ACTIONS, displayChord, KEYMAPS, type Action } from "./keymap";
 import { ASPECTS, PRESETS } from "./model";
-import { setKeymap, state } from "./state";
+import { setKeymap, state, update } from "./state";
+import { formatTimecode } from "./timecode";
 import { showError } from "./toast";
 
 const dlg = (id: string) => $<HTMLDialogElement>(`#${id}`);
@@ -48,6 +49,13 @@ export async function openExport(): Promise<void> {
         ),
       ),
     );
+    // In/out marks narrow the export: say so, with a one-click way out (people forget marks they set).
+    const marked = state.markIn !== null || state.markOut !== null;
+    $("#export-range").hidden = !marked;
+    if (marked) {
+      const tc = (t: number) => formatTimecode(t, p.canvas.frame_rate);
+      $("#export-range-text").textContent = `Only the marked part is exported: ${tc(state.markIn ?? 0)} to ${state.markOut === null ? "the end" : tc(state.markOut)}.`;
+    }
     $<HTMLInputElement>("#export-name").value = `${safeName(p.name) || "Untitled"}.mp4`;
     $("#export-folder").textContent = folder;
     exportMode("idle");
@@ -139,10 +147,14 @@ export function initDialogs(): void {
   $("#export-pick").addEventListener("click", async () => {
     try {
       const f = await api.pickFolder();
-      if (f) $("#export-folder").textContent = folder = f;
+      if (f) $("#export-folder").textContent = $("#export-folder").title = folder = f;
     } catch (e) {
       showError(e);
     }
+  });
+  $("#export-all").addEventListener("click", () => {
+    update({ markIn: null, markOut: null });
+    $("#export-range").hidden = true;
   });
   $("#export-cancel").addEventListener("click", () => {
     if (job) void api.exportCancel(job);
