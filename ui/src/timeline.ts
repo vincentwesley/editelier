@@ -186,14 +186,23 @@ export function draw(): void {
   if (state.markIn !== null || state.markOut !== null) {
     const a = toX(state.markIn ?? 0);
     const b = toX(state.markOut ?? timelineEnd(p.timeline));
-    ctx.globalAlpha = 0.35;
     ctx.fillStyle = c.focus;
+    ctx.globalAlpha = 0.1; // the marked range shades every track, so it reads as "this part"
+    ctx.fillRect(a, RULER, b - a, Y.end - RULER);
+    ctx.globalAlpha = 0.6;
     ctx.fillRect(a, RULER - 6, b - a, 6);
     ctx.globalAlpha = 1;
+    ctx.fillRect(a, RULER - 12, 2, 12);
+    ctx.fillRect(b - 2, RULER - 12, 2, 12);
   }
 
   const tl = p.timeline;
   const media = new Map(p.media.map((m) => [m.id, m]));
+  // Empty-state hint in the video lane (research 03 §6): the next step, not just a blank track.
+  if (!tl.main.length && !dropAt) {
+    ctx.fillStyle = c.muted;
+    ctx.fillText(p.media.length ? "Drag a clip here, or press + next to it in Media" : "Import clips in the Media panel, then drag them here", 16, Y.main + MAIN / 2 + 4);
+  }
   // Main track: binary search to the first visible clip, stop past the right edge.
   const starts = mainStarts(tl.main);
   let i = Math.max(0, mainIndexAt(tl.main, starts, t0));

@@ -311,7 +311,18 @@ function renderInspector(p: Project): void {
       ),
       h("p", { class: "muted" }, `${p.canvas.width}×${p.canvas.height} at ${(p.canvas.frame_rate.num / p.canvas.frame_rate.den).toFixed(2)} fps`),
       h("p", { class: "muted" }, tl.main.length ? "Select a clip on the timeline to edit it." : "Add clips from the Media panel to start your edit."),
-      h("ul", { class: "hints muted" }, h("li", {}, h("kbd", {}, "S"), " splits at the playhead"), h("li", {}, h("kbd", {}, "Delete"), " removes a clip and closes the gap"), h("li", {}, h("kbd", {}, "?"), " lists every shortcut")),
+      // Hints follow the active key set (a pro-style S is snapping, not split).
+      h(
+        "ul",
+        { class: "hints muted" },
+        ...(
+          [
+            ["split", " splits at the playhead"],
+            ["rippleDelete", " removes a clip and closes the gap"],
+            ["cheatSheet", " lists every shortcut"],
+          ] as const
+        ).map(([a, text]) => h("li", {}, h("kbd", {}, keyFor(a) ?? "?"), text)),
+      ),
     ];
   }
   box.replaceChildren(...kids.filter((k): k is HTMLElement => !!k));
@@ -319,8 +330,20 @@ function renderInspector(p: Project): void {
 }
 
 // ---- menu ----
+/** The first key for an action in the active key set, as shown to people ("Ctrl+K", "?"). */
+const keyFor =(a: Action) => {
+  const c = KEYMAPS[state.keymap].keys[a]?.[0];
+  return c ? displayChord(c) : null;
+};
+
 function renderMenu(): void {
   const keys = KEYMAPS[state.keymap].keys;
+  // Every action button says what it does and its key on hover (e.g. "Trim clip start to playhead (Q)").
+  for (const b of document.querySelectorAll<HTMLElement>("#editor [data-action]")) {
+    const a = b.dataset.action as Action;
+    const k = keyFor(a);
+    b.title = k ? `${ACTIONS[a]} (${k})` : ACTIONS[a];
+  }
   $("#actions-list").replaceChildren(
     ...(Object.entries(ACTIONS) as [Action, string][]).map(([a, label]) =>
       h(
@@ -434,7 +457,8 @@ export function initEditor(): void {
     $("#snap").setAttribute("aria-pressed", String(s.snapping));
     const zoom = $<HTMLInputElement>("#zoom");
     zoom.value = String(Math.round((Math.log(s.pxPerSec / 2) / Math.log(1000)) * 1000));
-    if (s.keymap !== lastKeymap) {
+    const keymapChanged = s.keymap !== lastKeymap;
+    if (keymapChanged) {
       lastKeymap = s.keymap;
       renderMenu();
     }
@@ -452,7 +476,7 @@ export function initEditor(): void {
       if (lastProject && lastProject.id === p.id && s.snap!.undo_label) $("#save-state").textContent = "Saving…";
     }
     if (p !== lastProject || s.selectedMedia !== lastMedia) renderBin(p);
-    if (p !== lastProject || s.selection !== lastSel) renderInspector(p);
+    if (p !== lastProject || s.selection !== lastSel || keymapChanged) renderInspector(p);
     lastProject = p;
     lastSel = s.selection;
     lastMedia = s.selectedMedia;
