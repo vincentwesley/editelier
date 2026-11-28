@@ -8,7 +8,7 @@ Run before every public release (GitHub Release or Store submission). Engineerin
 - [ ] `cargo deny check licenses` + npm licence scan clean (A-LEGAL-02). No GPL/AGPL code; LGPL only as DLLs or a helper process (D11).
 - [ ] Vendored FilmCraft crates taken under MIT, file headers intact, PROVENANCE with commit `2d1d1b6` ([R01 §10](research/01-filmcraft.md)).
 - [ ] Any OpenReel/OpenCut code: per-file provenance checked, MIT header kept ([R02](research/02-oss-editors.md)).
-- [ ] MediaBunny/symphonia (MPL-2.0), if used: unmodified, source pointer in notices.
+- [x] MPL-2.0 crates that ship (cssparser, cssparser-macros, selectors, dtoa-short, option-ext, via Tauri): unmodified, licence + source pointers in `THIRD_PARTY_NOTICES.md` (2026-11-28). MediaBunny/symphonia, if ever used: same.
 
 ## 2. FFmpeg LGPL compliance ([ffmpeg.org/legal](https://ffmpeg.org/legal.html), [R04 §7](research/04-windows-media-legal.md))
 - [ ] Our own build, no `--enable-gpl`/`--enable-nonfree`; software h264/hevc/aac disabled (A-LEGAL-01).
@@ -18,9 +18,10 @@ Run before every public release (GitHub Release or Store submission). Engineerin
 - [ ] `BUILD-FFMPEG.txt` (configure line, toolchain, versions) shipped.
 - [ ] About box credits FFmpeg under LGPLv2.1 with links (D13). Spelled "FFmpeg".
 - [ ] Licence terms / Store terms say FFmpeg is LGPLv2.1, not ours, and don't forbid reverse engineering of it.
-- [ ] Users can swap the DLLs: portable ZIP on GitHub Releases + documented steps (MSIX installs are read-only; interpretation unverified).
+- [x] Users can swap the DLLs: `cargo xtask package --portable` → `target/package/Editelier-<version>-portable-x64.zip` (MSIX payload minus manifest/Assets) with `README-PORTABLE.txt` (`packaging/PORTABLE.md`: replacement steps, source location). Attach it to the GitHub Release (MSIX installs are read-only; interpretation unverified).
 - [ ] Repeat on every FFmpeg bump.
 - **Status (2026-11-27):** our own LGPLv2.1 build exists: `packaging/build-ffmpeg.sh` (WSL2, mingw-w64) → `third_party/ffmpeg-lgpl/`, FFmpeg 8.1.3 + dav1d 1.5.5 (BSD-2) + zlib 1.3.1 static, allow-list config with no h264/hevc/aac codecs/parsers/hwaccels and no network (`packaging/ffmpeg-build.md`). A-LEGAL-01 passes on it. `cargo xtask package` bundles it when present (falls back to the dev BtbN LGPLv3 build with a warning; never publish that MSIX). Source archive for the Release: `third_party/ffmpeg-lgpl-src/`.
+- **Status (2026-11-28):** portable ZIP + `README-PORTABLE.txt` added; About links (ffmpeg.org, LGPL text, releases, notices) and credits links now open in the default browser: the shell allow-lists https prefixes (`EXTERNAL` in `src-tauri/src/main.rs`) and drops every other new window or off-app navigation (no opener plugin, no capability change). Credits card names the logo artist (Portus Workstation).
 - Package layout: `licences/FFmpeg/LICENSE.txt` (the build's own licence text) and `licences/FFmpeg/BUILD-FFMPEG.txt` (`-buildconf` + pin + source links) are written by `cargo xtask package`.
 
 ## 3. Codec patents ([R04 §3](research/04-windows-media-legal.md))
@@ -44,7 +45,8 @@ Run before every public release (GitHub Release or Store submission). Engineerin
 - [ ] Test media is not in the package; fetched corpus stays gitignored.
 
 ## 6. Trademarks and clean room
-- [ ] No Premiere/DaVinci/Resolve/CapCut in name, icon, Store listing, screenshots or marketing (D19). Keymap names descriptive only, with "not affiliated" note in Settings.
+- [ ] No Premiere/DaVinci/Resolve/CapCut in name, icon, Store listing, screenshots or marketing (D19).
+- [x] Keymap names descriptive only, with a "not affiliated with Adobe, Blackmagic Design or ByteDance" note under Welcome "Coming from" and the Keyboard shortcuts key-set picker (2026-11-28).
 - [ ] No proprietary icons, layouts, colour schemes or trade dress.
 - [ ] No ArtCraft/FilmCraft names or owl icon.
 - [ ] **Name check status for "Editelier"** ([R04 §6](research/04-windows-media-legal.md)):
@@ -61,7 +63,7 @@ Run before every public release (GitHub Release or Store submission). Engineerin
 | **EUIPO TMview** | **manual, owner** |
 
 ## 7. Privacy
-- [ ] `docs/PRIVACY.md` true for this build: no network calls, no telemetry (A-LEGAL-05).
+- [x] `docs/PRIVACY.md` true for v0.1.0 (2026-11-28): no network calls, no telemetry, no AI models yet (planned, on-device), cache-clear button marked planned. Re-check A-LEGAL-05 on the release build.
 - [ ] Privacy policy published at a public URL (landing page) for the Store (policy 10.5.1).
 - [ ] Automation channel absent from release (A-LEGAL-04).
 

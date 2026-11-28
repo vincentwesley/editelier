@@ -1,4 +1,4 @@
-//! `cargo xtask <task>`: check, layers, fetch-media, package [--dev-cert], accept <id>|--milestone m1.
+//! `cargo xtask <task>`: check, layers, fetch-media, package [--dev-cert|--portable], accept <id>|--milestone m1.
 //! Plain std + serde_json; shells out to cargo, npm, PowerShell and Microsoft's winapp CLI.
 
 use std::collections::{HashMap, HashSet};
@@ -18,9 +18,12 @@ fn main() -> ExitCode {
         Some("check") => check(),
         Some("layers") => layers(),
         Some("fetch-media") => fetch_media(),
+        Some("package") if flag("--portable") => {
+            portable().map(|p| println!("ZIP: {}", p.display()))
+        }
         Some("package") => package(flag("--dev-cert")).map(|p| println!("MSIX: {}", p.display())),
         Some("accept") => accept(&args[1..]),
-        _ => Err("usage: cargo xtask check | layers | fetch-media | package [--dev-cert] | accept <id>... | accept --milestone m1".into()),
+        _ => Err("usage: cargo xtask check | layers | fetch-media | package [--dev-cert|--portable] | accept <id>... | accept --milestone m1".into()),
     };
     match res {
         Ok(()) => ExitCode::SUCCESS,
@@ -296,10 +299,10 @@ fn ffmpeg_dir() -> PathBuf {
     }
 }
 
-fn package(dev_cert: bool) -> R<PathBuf> {
+/// Release build + the payload shared by the MSIX and the portable ZIP: exe, FFmpeg helpers
+/// and DLLs, `licences/`. Fonts are embedded in the exe; only their OFL.txt ships.
+fn payload(lay: &Path) -> R {
     let root = root();
-    let m = manifest()?;
-    lint_manifest(&m)?;
     let ff = ffmpeg_dir();
     if !ff.join("bin/ffmpeg.exe").is_file() {
         return Err("no FFmpeg: run packaging/build-ffmpeg.sh in WSL (or `cargo xtask fetch-media` for dev)".into());
@@ -319,12 +322,8 @@ fn package(dev_cert: bool) -> R<PathBuf> {
         "custom-protocol",
     ]))?;
 
-    let out = root.join("target/msix");
-    let lay = out.join("layout");
-    let _ = fs::remove_dir_all(&lay);
-    for d in ["Assets", "licences/FFmpeg"] {
-        fs::create_dir_all(lay.join(d)).map_err(|e| e.to_string())?;
-    }
+    let _ = fs::remove_dir_all(lay);
+    fs::create_dir_all(lay.join("licences/FFmpeg")).map_err(|e| e.to_string())?;
     copy(
         &root.join("target/release/editelier.exe"),
         &lay.join("editelier.exe"),
@@ -338,12 +337,6 @@ fn package(dev_cert: bool) -> R<PathBuf> {
         if n.ends_with(".dll") || n == "ffmpeg.exe" || n == "ffprobe.exe" {
             copy(&e.path(), &lay.join(&n))?;
         }
-    }
-    for e in fs::read_dir(root.join("packaging/Assets"))
-        .map_err(|e| e.to_string())?
-        .flatten()
-    {
-        copy(&e.path(), &lay.join("Assets").join(e.file_name()))?;
     }
     let lic = lay.join("licences");
     for f in ["LICENSE", "NOTICE.md", "THIRD_PARTY_NOTICES.md"] {
@@ -365,7 +358,22 @@ fn package(dev_cert: bool) -> R<PathBuf> {
             pinned.trim()
         ),
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string())
+}
+
+fn package(dev_cert: bool) -> R<PathBuf> {
+    let m = manifest()?;
+    lint_manifest(&m)?;
+    let out = root().join("target/msix");
+    let lay = out.join("layout");
+    payload(&lay)?;
+    fs::create_dir_all(lay.join("Assets")).map_err(|e| e.to_string())?;
+    for e in fs::read_dir(root().join("packaging/Assets"))
+        .map_err(|e| e.to_string())?
+        .flatten()
+    {
+        copy(&e.path(), &lay.join("Assets").join(e.file_name()))?;
+    }
     let man = lay.join("AppxManifest.xml");
     fs::write(&man, m).map_err(|e| e.to_string())?;
 
@@ -386,6 +394,35 @@ fn package(dev_cert: bool) -> R<PathBuf> {
     }
     run(&mut c)?;
     Ok(msix)
+}
+
+/// Portable ZIP for GitHub Releases: the MSIX payload minus manifest/Assets, in a writable
+/// folder so users can swap the LGPL FFmpeg files (D9, `packaging/PORTABLE.md`).
+fn portable() -> R<PathBuf> {
+    let v = version()?;
+    let name = format!(
+        "Editelier-{}-portable-x64",
+        v.strip_suffix(".0").unwrap_or(&v)
+    );
+    let out = root().join("target/package");
+    let dir = out.join(&name);
+    payload(&dir)?;
+    copy(
+        &root().join("packaging/PORTABLE.md"),
+        &dir.join("README-PORTABLE.txt"),
+    )?;
+    let zip = out.join(format!("{name}.zip"));
+    let _ = fs::remove_file(&zip);
+    // No zip crate in the lockfile: Compress-Archive, paths passed via env (no quoting).
+    run(Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "Compress-Archive -Path $env:XT_SRC -DestinationPath $env:XT_ZIP",
+        ])
+        .env("XT_SRC", &dir)
+        .env("XT_ZIP", &zip))?;
+    Ok(zip)
 }
 
 fn winapp() -> Command {

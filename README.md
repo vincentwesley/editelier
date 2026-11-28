@@ -13,6 +13,9 @@ npm run check      # typecheck + lint + unit
 npm run build      # ui/dist (Tauri frontendDist)
 ```
 
+## Package
+`cargo xtask package` builds the MSIX; `cargo xtask package --portable` builds `target/package/Editelier-<version>-portable-x64.zip` for GitHub Releases (see `packaging/PORTABLE.md`, including how to replace the LGPL FFmpeg).
+
 ## Secrets, network and data
 - Secrets: none.
 - Network calls: none. No telemetry, no analytics.
