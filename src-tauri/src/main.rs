@@ -77,12 +77,14 @@ fn open_external(url: &tauri::Url) {
     }
 }
 
-/// The app's own pages (tauri.localhost, dev server, asset/ipc hosts) navigate normally.
+/// The app's own pages (tauri.localhost, dev server, asset/ipc hosts) navigate normally;
+/// file:, data:, javascript: and other schemes never load in the app window.
 fn is_app_url(url: &tauri::Url) -> bool {
-    !matches!(url.scheme(), "http" | "https")
-        || url
-            .host_str()
-            .is_some_and(|h| h == "localhost" || h.ends_with(".localhost"))
+    matches!(url.scheme(), "tauri" | "ipc" | "asset" | "about")
+        || matches!(url.scheme(), "http" | "https")
+            && url
+                .host_str()
+                .is_some_and(|h| h == "localhost" || h.ends_with(".localhost"))
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -256,5 +258,7 @@ mod tests {
         assert!(app("http://localhost:5173/"));
         assert!(!app("https://vwesley.dev/"));
         assert!(!app("https://localhost.evil.example/"));
+        assert!(!app("file:///C:/Users/Public/x.html"));
+        assert!(!app("data:text/html,hi"));
     }
 }
