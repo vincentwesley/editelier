@@ -283,6 +283,15 @@ impl Index {
         let first = self.pts.first().copied().unwrap_or(0);
         self.pts[self.frame_at(first + MICROS.rescale(micros, self.time_base))]
     }
+
+    /// PTS of the frame shown at `ticks` (at `ticks_per_sec`) from the first frame: latest
+    /// PTS <= t, sample-and-hold (D4).
+    pub fn pts_at_ticks(&self, ticks: i64, ticks_per_sec: i64) -> i64 {
+        let tb = self.time_base;
+        let den = tb.num as i128 * ticks_per_sec as i128;
+        let off = (ticks as i128 * tb.den as i128 + den / 2).div_euclid(den) as i64;
+        self.pts[self.frame_at(self.pts[0] + off)]
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

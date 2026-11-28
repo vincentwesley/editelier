@@ -8,24 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-fn media(name: &str) -> Option<PathBuf> {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../test-media")
-        .join(name);
-    if p.is_file() {
-        Some(p)
-    } else {
-        eprintln!(
-            "SKIP: {} missing; run scripts/make-test-media.ps1",
-            p.display()
-        );
-        None
-    }
-}
-
-fn tools() -> Option<Tools> {
-    Tools::locate().map_err(|e| eprintln!("SKIP: {e}")).ok()
-}
+mod common;
+use common::{media, oracle, tools};
 
 fn cache_dir(name: &str) -> PathBuf {
     let d = std::env::temp_dir()
@@ -38,9 +22,8 @@ fn cache_dir(name: &str) -> PathBuf {
 /// Oracle: the local (GPL, test-only) ffmpeg's luma planes (8-bit, limited range as coded) for
 /// frames `ns` in presentation order.
 fn oracle_luma(path: &Path, w: u32, h: u32, ten_bit: bool, ns: &[usize]) -> Option<Vec<Vec<u8>>> {
-    let ffmpeg = std::env::var("EDITELIER_ORACLE_FFMPEG").unwrap_or_else(|_| "ffmpeg".into());
     let sel: Vec<String> = ns.iter().map(|n| format!("eq(n\\,{n})")).collect();
-    let out = Command::new(ffmpeg)
+    let out = Command::new(oracle())
         .args(["-v", "error", "-noautorotate", "-i"])
         .arg(path)
         .args([

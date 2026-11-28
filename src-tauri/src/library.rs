@@ -421,10 +421,7 @@ impl OwnedFrame {
 
 /// PTS of the frame shown at `t` (source time from the first frame): latest PTS <= t (D4).
 pub fn pts_at(index: &Index, t: Tick) -> i64 {
-    let tb = index.time_base;
-    let den = tb.num as i128 * TICKS_PER_SECOND as i128;
-    let off = (t.0 as i128 * tb.den as i128 + den / 2).div_euclid(den) as i64;
-    index.pts[index.frame_at(index.pts[0] + off)]
+    index.pts_at_ticks(t.0, TICKS_PER_SECOND)
 }
 
 /// Decoders for one thread (Media Foundation decoders aren't `Send`). Uses `device` for DXVA

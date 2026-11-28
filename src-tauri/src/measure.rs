@@ -206,7 +206,7 @@ pub fn run(app: &AppHandle) -> bool {
         secs_or(10.0),
         false,
     ) {
-        ok &= f >= 27.0;
+        ok &= f >= 29.5; // A-PERF-01 (docs/ACCEPTANCE.md; xtask verdict judges)
     }
     if let Some(f) = phase(
         "4K60 via proxy",

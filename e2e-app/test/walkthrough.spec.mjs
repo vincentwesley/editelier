@@ -9,13 +9,12 @@ import { crc32, deflateSync } from "node:zlib";
 import { browser, expect } from "@wdio/globals";
 import { connect } from "../agent.mjs";
 import { MEDIA, OUT } from "../wdio.conf.mjs";
+import { key, setTheme, tl, until } from "./helpers.mjs";
 
 const QA = resolve(import.meta.dirname, "..", "..", "qa-output", "walkthrough");
 let agent;
-const tl = async () => (await agent.call("snapshot")).project.timeline;
-const until = (fn, what, timeout = 20_000) => browser.waitUntil(fn, { timeout, interval: 100, timeoutMsg: `timed out: ${what}` });
 
-// Plain execute() calls: @wdio/tauri-service probes for its plugin (~7 s) before every $/click/find,
+// Plain execute() calls (see helpers.mjs): @wdio/tauri-service probes for its plugin (~7 s) before every $/click/find,
 // so this spec drives the DOM directly. el.click() runs the same handlers a pointer click does.
 const click = (sel) => browser.execute((s) => document.querySelector(s).click(), sel);
 const text = (sel) => browser.execute((s) => document.querySelector(s)?.textContent ?? "", sel);
@@ -67,16 +66,12 @@ function png(bmp, w, h) {
 }
 
 async function shot(name) {
-  await browser.pause(250); // let toasts, dialogs and the preview settle
+  // Two frames out so the last DOM change is painted before the capture.
+  await browser.executeAsync((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
   const bmp = join(tmpdir(), `editelier-wt-${name}.bmp`);
   const s = await agent.call("screenshot", { path: bmp });
   writeFileSync(join(QA, `${name}.png`), png(readFileSync(bmp), s.width, s.height));
   rmSync(bmp, { force: true });
-}
-
-async function key(...keys) {
-  await browser.execute(() => document.getElementById("tl-scroll").focus());
-  await browser.keys(keys);
 }
 
 async function importAll() {
@@ -90,12 +85,6 @@ async function importAll() {
 async function toWelcome() {
   await browser.refresh();
   await until(() => shown("#welcome"), "welcome");
-}
-
-async function theme(light) {
-  if (((await attr("html", "data-theme")) === "light") === light) return;
-  await browser.execute(() => [...document.querySelectorAll("[data-theme-toggle]")].find((b) => b.checkVisibility()).click());
-  await until(async () => ((await attr("html", "data-theme")) === "light") === light, "theme switched");
 }
 
 describe("Usability walkthroughs", () => {
@@ -122,37 +111,37 @@ describe("Usability walkthroughs", () => {
     await importAll();
     await shot("a03-imported");
     for (const n of ["a.mp4", "b.mp4", "c.mp4"]) await click(clip(n));
-    await until(async () => (await tl()).main.length === 3, "3 clips");
+    await until(async () => (await tl(agent)).main.length === 3, "3 clips");
     await shot("a04-three-clips");
 
-    const len = (await tl()).main[0].source_out;
+    const len = (await tl(agent)).main[0].source_out;
     await agent.call("seek", { ticks: Math.round(len / 3) });
     await until(async () => (await text("#timecode")) !== "00:00:00;00", "playhead moved");
     await click('.tl-bar [data-action="rippleTrimStart"]');
-    await until(async () => (await tl()).main[0].source_in > 0, "trimmed start");
+    await until(async () => (await tl(agent)).main[0].source_in > 0, "trimmed start");
     await shot("a05-trim-start");
 
     await agent.call("seek", { ticks: Math.round(len / 3) });
-    await browser.pause(150);
+    await until(async () => (await text("#timecode")) !== "00:00:00;00", "playhead moved");
     await click('.tl-bar [data-action="split"]');
-    await until(async () => (await tl()).main.length === 4, "split -> 4");
+    await until(async () => (await tl(agent)).main.length === 4, "split -> 4");
     await shot("a06-split");
 
     await click('.tl-bar [data-action="rippleDelete"]');
-    await until(async () => (await tl()).main.length === 3, "delete -> 3");
+    await until(async () => (await tl(agent)).main.length === 3, "delete -> 3");
     await shot("a07-deleted");
 
     await agent.call("seek", { ticks: 0 });
-    await browser.pause(150);
+    await until(async () => (await text("#timecode")) === "00:00:00;00", "playhead at 0");
     await click('.tl-bar [data-action="addTitle"]');
-    await until(async () => (await tl()).titles.length === 1, "title");
+    await until(async () => (await tl(agent)).titles.length === 1, "title");
     await shot("a08-title-inspector");
     await fill("#in-title-text", "My first video");
-    await until(async () => (await tl()).titles[0].text === "My first video", "title text");
+    await until(async () => (await tl(agent)).titles[0].text === "My first video", "title text");
     await shot("a09-title-text");
 
     await click(clip("tone.wav"));
-    await until(async () => (await tl()).music.length === 1, "music");
+    await until(async () => (await tl(agent)).music.length === 1, "music");
     await shot("a10-music");
 
     await click('.bar [data-action="export"]');
@@ -179,7 +168,7 @@ describe("Usability walkthroughs", () => {
     await until(() => shown("#editor"), "editor");
     await importAll();
     for (const n of ["a.mp4", "b.mp4", "c.mp4"]) await click(clip(n));
-    await until(async () => (await tl()).main.length === 3, "3 clips");
+    await until(async () => (await tl(agent)).main.length === 3, "3 clips");
     await shot("b02-editor");
     // The inspector's key hints follow the pro-style set: split is Ctrl+K there, not S.
     expect(await text("#inspector .hints")).toContain("Ctrl+K");
@@ -196,21 +185,22 @@ describe("Usability walkthroughs", () => {
     await key("k");
     await until(async () => (await playLabel()) === "Play", "K stops");
 
-    const len = (await tl()).main[0].source_out;
+    const len = (await tl(agent)).main[0].source_out;
     await agent.call("seek", { ticks: Math.round(len / 2) });
     await until(async () => (await text("#timecode")) !== "00:00:00;00", "playhead moved");
     await key("Control", "k");
-    await until(async () => (await tl()).main.length === 4, "Ctrl+K split");
+    await until(async () => (await tl(agent)).main.length === 4, "Ctrl+K split");
     await shot("b05-ctrl-k");
 
     await key("i");
+    const markIn = await text("#timecode");
     await agent.call("seek", { ticks: Math.round(len * 1.5) });
-    await browser.pause(200);
+    await until(async () => (await text("#timecode")) !== markIn, "playhead moved");
     await key("o");
     await shot("b06-in-out");
 
     await key("Shift", "Delete");
-    await until(async () => (await tl()).main.length === 3, "Shift+Delete ripple delete");
+    await until(async () => (await tl(agent)).main.length === 3, "Shift+Delete ripple delete");
     await shot("b07-ripple-delete");
 
     await key("Control", "m");
@@ -252,7 +242,7 @@ describe("Usability walkthroughs", () => {
       await size(w, h);
       for (const light of [false, true]) {
         const t = `${resized ? `${w}x${h}` : "default"}-${light ? "light" : "dark"}`;
-        await theme(light);
+        await setTheme(light);
         await shot(`c-editor-${t}`);
         await click('.bar [data-action="export"]');
         await shot(`c-export-${t}`);
@@ -267,10 +257,10 @@ describe("Usability walkthroughs", () => {
     for (const [w, h] of resized ? sizes : [sizes[0]]) {
       if (resized) await size(w, h);
       for (const light of [false, true]) {
-        await theme(light);
+        await setTheme(light);
         await shot(`c-welcome-${resized ? `${w}x${h}` : "default"}-${light ? "light" : "dark"}`);
       }
     }
-    await theme(false);
+    await setTheme(false);
   });
 });

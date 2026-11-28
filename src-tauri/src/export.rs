@@ -513,16 +513,15 @@ mod tests {
     }
 
     /// A-PERF-03/04 bench: a 60 s timeline of `test-media/bench20_{1080p,2160p}30.mp4` (the clip
-    /// three times, a title, its own audio) exported with the YouTube preset; budgets 30 s (1080p)
-    /// and 80 s (4K). `cargo test --release -p editelier -- --ignored export_bench
-    /// --test-threads=1 --nocapture` (also `cargo xtask accept A-PERF-03`).
+    /// three times, a title, its own audio) exported with the YouTube preset; prints BENCH lines
+    /// that `cargo xtask accept A-PERF-03/04` judges against the ACCEPTANCE budgets. `cargo test
+    /// --release -p editelier -- --ignored export_bench --test-threads=1 --nocapture`.
     #[test]
     #[ignore = "perf bench; needs the bench20 clips (see docs/next-session.md)"]
     fn export_bench() {
-        let mut over = Vec::new();
-        for (name, ui, (w, h), budget) in [
-            ("bench20_1080p30.mp4", "youtube-1080", (1920, 1080), 30.0),
-            ("bench20_2160p30.mp4", "youtube-4k", (3840, 2160), 80.0),
+        for (name, ui, (w, h)) in [
+            ("bench20_1080p30.mp4", "youtube-1080", (1920, 1080)),
+            ("bench20_2160p30.mp4", "youtube-4k", (3840, 2160)),
         ] {
             let src = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../test-media")
@@ -589,11 +588,7 @@ mod tests {
                 done.encoder
             );
             assert_eq!(done.frames, 1800);
-            if done.seconds > budget {
-                over.push(format!("{name}: {:.1} s > {budget} s", done.seconds));
-            }
         }
-        assert!(over.is_empty(), "over budget: {over:?}");
     }
 
     /// Preview throughput bench (headless): decode + upload + compose + output transform for

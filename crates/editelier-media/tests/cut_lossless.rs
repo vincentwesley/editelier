@@ -4,18 +4,19 @@
 //! sources, frame for frame. Skips without media (scripts/make-test-media.ps1), helper or oracle.
 #![cfg(windows)]
 
-use editelier_core::{Command as Cmd, FrameRate, Id, MediaMeta, Project, Session, Settings, Tick};
+use editelier_core::{
+    Command as Cmd, FrameRate, Id, MediaMeta, Project, Session, Settings, TICKS_PER_SECOND,
+};
 use editelier_media::win::{self, VideoDecoder};
 use editelier_media::*;
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-const FPS: FrameRate = FrameRate::FPS_30;
+mod common;
+use common::{media, oracle, tools};
 
-fn oracle() -> String {
-    std::env::var("EDITELIER_ORACLE_FFMPEG").unwrap_or_else(|_| "ffmpeg".into())
-}
+const FPS: FrameRate = FrameRate::FPS_30;
 
 struct Src {
     path: PathBuf,
@@ -25,13 +26,7 @@ struct Src {
 }
 
 fn open(t: &Tools, name: &str) -> Option<Src> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../test-media")
-        .join(name);
-    if !path.is_file() {
-        eprintln!("SKIP: {} missing", path.display());
-        return None;
-    }
+    let path = media(name)?;
     let v = probe(t, &path).unwrap().video.remove(0);
     let cache = std::env::temp_dir().join("editelier-cut-tests").join(name);
     let ix = ffmpeg::index(t, &path, &v, &cache).unwrap();
@@ -46,27 +41,16 @@ fn open(t: &Tools, name: &str) -> Option<Src> {
     })
 }
 
-/// Same tick -> PTS mapping as the shell (`library::pts_at`): sample-and-hold from the first PTS.
-fn pts_at(ix: &Index, t: Tick) -> i64 {
-    let tb = ix.time_base;
-    let den = tb.num as i128 * editelier_core::TICKS_PER_SECOND as i128;
-    let off = (t.0 as i128 * tb.den as i128 + den / 2).div_euclid(den) as i64;
-    ix.pts[ix.frame_at(ix.pts[0] + off)]
-}
-
-/// Tightly packed NV12 (Y rows then UV rows, `width` bytes each).
-fn nv12(f: &Frame) -> Vec<u8> {
+/// Writes `f` as tightly packed NV12 (Y rows then UV rows, `width` bytes each).
+fn write_nv12(out: &mut impl Write, f: &Frame) {
     let FrameData::Cpu { bytes, stride } = &f.data else {
         panic!("expected a CPU frame");
     };
     assert_eq!(f.format, PixelFormat::Nv12);
     let (w, h) = (f.width as usize, f.height as usize);
-    bytes
-        .chunks(*stride)
-        .take(h + h / 2)
-        .flat_map(|r| &r[..w])
-        .copied()
-        .collect()
+    for r in bytes.chunks(*stride).take(h + h / 2) {
+        out.write_all(&r[..w]).unwrap();
+    }
 }
 
 fn hashes(framemd5: &[u8]) -> Vec<String> {
@@ -77,15 +61,12 @@ fn hashes(framemd5: &[u8]) -> Vec<String> {
         .collect()
 }
 
-fn framemd5(input: &Path, trim: Option<(i64, i64)>) -> Vec<String> {
-    let mut c = Command::new(oracle());
-    c.args(["-v", "error", "-noautorotate", "-i"])
+/// Per-frame MD5s of `input`'s first video stream as decoded by the oracle (passthrough).
+fn framemd5(input: &Path) -> Vec<String> {
+    let o = Command::new(oracle())
+        .args(["-v", "error", "-noautorotate", "-i"])
         .arg(input)
-        .args(["-map", "0:v:0"]);
-    if let Some((a, b)) = trim {
-        c.args(["-vf", &format!("trim=start_frame={a}:end_frame={b}")]);
-    }
-    let o = c
+        .args(["-map", "0:v:0"])
         .args([
             "-fps_mode",
             "passthrough",
@@ -175,24 +156,27 @@ fn check(name: &str, tools: &Tools, s: &Session, srcs: &mut [Src], want: &[(usiz
         .stdin(Stdio::piped())
         .spawn()
         .unwrap();
-    let mut stdin = enc.stdin.take().unwrap();
+    let mut stdin = BufWriter::new(enc.stdin.take().unwrap());
     for c in p.timeline.main.iter() {
         let src = &mut srcs[c.media as usize - 1];
         assert_eq!(src.size, (w, h), "{name}: joined clips must share a format");
         for k in 0..FPS.frame_at(c.duration()) {
-            let pts = pts_at(&src.ix, c.source_in + FPS.tick_of(k));
+            let t = c.source_in + FPS.tick_of(k);
+            let pts = src.ix.pts_at_ticks(t.0, TICKS_PER_SECOND);
             let f = src.dec.frame_at(pts).unwrap();
             assert_eq!(f.pts, pts);
-            stdin.write_all(&nv12(&f)).unwrap();
+            write_nv12(&mut stdin, &f);
         }
     }
-    drop(stdin);
+    drop(stdin.into_inner().unwrap());
     assert!(enc.wait().unwrap().success(), "{name}: FFV1 encode");
 
-    let got = framemd5(&out, None);
+    let got = framemd5(&out);
+    // One oracle pass per source, sliced by frame range (same as `trim=start_frame:end_frame`).
+    let refs: Vec<Vec<String>> = srcs.iter().map(|s| framemd5(&s.path)).collect();
     let mut expect = Vec::new();
     for &(i, a, b) in want {
-        expect.extend(framemd5(&srcs[i].path, Some((a, b))));
+        expect.extend_from_slice(&refs[i][a as usize..b as usize]);
     }
     assert_eq!(got.len(), total as usize, "{name}: exported frame count");
     assert_eq!(
@@ -210,16 +194,17 @@ fn check(name: &str, tools: &Tools, s: &Session, srcs: &mut [Src], want: &[(usiz
 }
 
 fn ready() -> Option<Tools> {
-    let t = Tools::locate().map_err(|e| eprintln!("SKIP: {e}")).ok()?;
+    let t = tools()?;
     let oracle_ok = Command::new(oracle())
         .arg("-version")
         .stdout(Stdio::null())
         .status()
         .is_ok_and(|s| s.success());
-    oracle_ok.then_some(t).or_else(|| {
+    if !oracle_ok {
         eprintln!("SKIP: oracle ffmpeg not on PATH");
-        None
-    })
+        return None;
+    }
+    Some(t)
 }
 
 /// A-CUT-01: 20 seeded random trim pairs on a GOP-250 clip, all on one timeline.
