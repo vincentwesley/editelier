@@ -788,11 +788,14 @@ fn capture(cmd: &mut Command) -> R<String> {
     let o = cmd
         .output()
         .map_err(|e| format!("{:?}: {e}", cmd.get_program()))?;
-    let log = format!(
+    let mut log = format!(
         "{}{}",
         String::from_utf8_lossy(&o.stdout),
         String::from_utf8_lossy(&o.stderr)
     );
+    if !o.status.success() {
+        log.push_str(&format!("\n{CMD_FAILED} ({})\n", o.status));
+    }
     println!("{log}");
     Ok(log)
 }
@@ -849,7 +852,15 @@ fn e2e() -> R<String> {
 }
 
 /// Per-id verdict from a shared log (bench tables, tagged e2e titles); other acts pass as run.
+/// Appended by `capture` when the command exits non-zero.
+const CMD_FAILED: &str = "xtask: command failed";
+
 fn verdict(id: &str, a: Act, log: &str) -> R {
+    // Benches judge their own output, but a crash after a good row is still a failure.
+    // (E2e exits non-zero whenever any spec fails, so it is judged per test instead.)
+    if matches!(a, Act::Measure60 | Act::ExportBench) && log.contains(CMD_FAILED) {
+        return Err("the bench command failed (see log)".into());
+    }
     let num = |s: Option<&str>| s.and_then(|s| s.trim().parse::<f64>().ok());
     match a {
         Act::Measure60 => {
