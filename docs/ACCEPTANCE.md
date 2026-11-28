@@ -6,6 +6,27 @@ Perf ids run on the reference laptop (i5-1335U / Iris Xe / 16 GB, plugged in, ba
 
 Fixtures: `F-*` are self-generated and committed (`test-media/synthetic/`); `C-*` are fetched corpus files (see Import corpus).
 
+## Last run (M1, 2026-11-28, reference laptop, own LGPL FFmpeg 8.1.3)
+
+Run in groups (`CARGO_BUILD_JOBS=2`; a single full run nearly exhausted 16 GB). "Partial" = the runner checks part of the row; the gap is named.
+
+| Group | Result | Notes |
+|---|---|---|
+| A-CUT-01..07 | 7 pass (03, 05 partial) | 03: audio sample count not checked; 05: synthetic VFR only |
+| A-QUAL-01, 02, 03, 06, 07 | 5 pass (03, 06 partial) | 03: title golden only; 06: gain maths, no ebur128 oracle |
+| A-QUAL-04, 05 | not automated | 05 needs HDR tone-mapping (M2) |
+| A-PERF-01..04 | 4 pass (01, 02 partial) | preview 1080p 30.0/30 fps, 4K60 proxy 59.9/60; export 1080p 4.02×, 4K 1.85× realtime (QSV); 01 has no PresentMon drop count, 02 no HEVC source |
+| A-PERF-05..07 | not automated | |
+| A-UI-01..06 | 6 pass (02, 04, 05 partial) | 02: no ripple/fade/checkpoint hashes; 04: no menu/History in M1; 05: no settings dialog in M1 |
+| A-COL-01 | pass | |
+| A-IMPORT-01, 02 | pass (partial) | local corpus only (owner footage pending) |
+| A-IMPORT-03 | not automated | |
+| A-MSIX-01 | pass | except "version bumped" |
+| A-MSIX-02..04 | blocked | dev cert not trusted (owner step, NEEDS-VIN) |
+| A-MSIX-05 | not automated | |
+| A-LEGAL-01, 04, 05 | pass (05 partial) | 05: naming scan manual (legal review 2026-11-28) |
+| A-LEGAL-02, 03 | not automated | manual scan clean in the 2026-11-28 legal review |
+
 ## A-CUT: frame exactness and editing
 
 Method: per timeline frame, the debug command `render_frame_hash --stage decoded` returns the MD5 of the decoded source planes (NV12/P010, before colour conversion) and is compared to `ffmpeg -i <ref> -pix_fmt nv12 -f framemd5` of an ffmpeg-made reference cut. Exports use the test-only lossless profile (FFV1/MKV, debug builds) for framemd5; MP4 exports are checked by `ffprobe -count_frames` frame count and PTS list.
