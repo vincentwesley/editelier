@@ -413,15 +413,15 @@ fn portable() -> R<PathBuf> {
     )?;
     let zip = out.join(format!("{name}.zip"));
     let _ = fs::remove_file(&zip);
-    // No zip crate in the lockfile: Compress-Archive, paths passed via env (no quoting).
-    run(Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Compress-Archive -Path $env:XT_SRC -DestinationPath $env:XT_ZIP",
-        ])
-        .env("XT_SRC", &dir)
-        .env("XT_ZIP", &zip))?;
+    // No zip crate in the lockfile: Windows' own bsdtar (10+; not Git's GNU tar on PATH).
+    let tar = PathBuf::from(env::var_os("SystemRoot").ok_or("SystemRoot unset")?)
+        .join("System32/tar.exe");
+    run(Command::new(tar)
+        .args(["-a", "-c", "-f"])
+        .arg(&zip)
+        .arg("-C")
+        .arg(&out)
+        .arg(&name))?;
     Ok(zip)
 }
 
@@ -475,6 +475,9 @@ fn dev_cert_files(publisher: &str) -> R<(PathBuf, String)> {
 enum Act {
     Cargo(&'static [&'static str]),
     Npm(&'static [&'static str]),
+    /// `cut_lossless` tests matching the filter: model cut -> MF decode -> FFV1/MKV via the
+    /// helper -> framemd5 vs the oracle's decode of the sources.
+    CutLossless(&'static str),
     ManifestLint,
     Msix,
     Legal01,
@@ -503,43 +506,6 @@ const QUALITY: Act = Act::Cargo(&[
 fn plan(id: &str) -> Option<(Vec<Act>, &'static str)> {
     use Act::*;
     let core = |t: &'static [&'static str]| Cargo(t);
-    // Lossless path: model cut -> MF decode -> FFV1/MKV via the helper -> framemd5 vs oracle trim.
-    let lossless = |t: &'static str| {
-        Cargo(match t {
-            "01" => &[
-                "test",
-                "-p",
-                "editelier-media",
-                "--test",
-                "cut_lossless",
-                "a_cut_01",
-            ],
-            "02" => &[
-                "test",
-                "-p",
-                "editelier-media",
-                "--test",
-                "cut_lossless",
-                "a_cut_02",
-            ],
-            "03" => &[
-                "test",
-                "-p",
-                "editelier-media",
-                "--test",
-                "cut_lossless",
-                "a_cut_03",
-            ],
-            _ => &[
-                "test",
-                "-p",
-                "editelier-media",
-                "--test",
-                "cut_lossless",
-                "a_cut_04",
-            ],
-        })
-    };
     Some(match id {
         "A-CUT-01" => (
             vec![
@@ -551,7 +517,7 @@ fn plan(id: &str) -> Option<(Vec<Act>, &'static str)> {
                     "core",
                     "trims_snap_to_frames_and_clamp_to_media",
                 ]),
-                lossless("01"),
+                CutLossless("a_cut_01"),
             ],
             "full (720p GOP-250 fixture, 20 seeded pairs)",
         ),
@@ -565,7 +531,7 @@ fn plan(id: &str) -> Option<(Vec<Act>, &'static str)> {
                     "core",
                     "random_splits_then_joins_round_trip",
                 ]),
-                lossless("02"),
+                CutLossless("a_cut_02"),
             ],
             "full (av_offset fixture: B-frames, elst, AAC priming)",
         ),
@@ -579,7 +545,7 @@ fn plan(id: &str) -> Option<(Vec<Act>, &'static str)> {
                     "core",
                     "join_refuses_non_contiguous_clips",
                 ]),
-                lossless("03"),
+                CutLossless("a_cut_03"),
             ],
             "partial: video framemd5 across the join; audio sample count not checked",
         ),
@@ -593,7 +559,7 @@ fn plan(id: &str) -> Option<(Vec<Act>, &'static str)> {
                     "core",
                     "ripple_delete_closes_the_gap",
                 ]),
-                lossless("04"),
+                CutLossless("a_cut_04"),
             ],
             "full",
         ),
@@ -947,42 +913,47 @@ fn verdict(id: &str, a: Act, log: &str) -> R {
 
 /// Log-producing acts return their output; the rest an empty log.
 fn act(a: Act) -> R<String> {
-    match a {
-        Act::Measure60 => capture(
-            cargo()
-                .args([
-                    "run",
-                    "--release",
-                    "-p",
-                    "editelier",
-                    "--features",
-                    "custom-protocol",
-                    "--",
-                    "--measure",
-                ])
-                .env("EDITELIER_MEASURE_SECS", "60"),
-        ),
-        Act::ExportBench => capture(cargo().args([
-            "test",
-            "--release",
-            "-p",
-            "editelier",
-            "export_bench",
-            "--",
-            "--ignored",
-            "--test-threads=1",
-            "--nocapture",
-        ])),
-        Act::E2e => e2e(),
-        other => act_checks(other).map(|()| String::new()),
-    }
-}
-
-fn act_checks(a: Act) -> R {
-    match a {
+    let done = match a {
+        Act::Measure60 => {
+            return capture(
+                cargo()
+                    .args([
+                        "run",
+                        "--release",
+                        "-p",
+                        "editelier",
+                        "--features",
+                        "custom-protocol",
+                        "--",
+                        "--measure",
+                    ])
+                    .env("EDITELIER_MEASURE_SECS", "60"),
+            );
+        }
+        Act::ExportBench => {
+            return capture(cargo().args([
+                "test",
+                "--release",
+                "-p",
+                "editelier",
+                "export_bench",
+                "--",
+                "--ignored",
+                "--test-threads=1",
+                "--nocapture",
+            ]));
+        }
+        Act::E2e => return e2e(),
         Act::Cargo(args) => run(cargo().args(args)),
         Act::Npm(args) => run(npm().args(args)),
-        Act::Measure60 | Act::ExportBench | Act::E2e => unreachable!("log acts run in act()"),
+        Act::CutLossless(filter) => run(cargo().args([
+            "test",
+            "-p",
+            "editelier-media",
+            "--test",
+            "cut_lossless",
+            filter,
+        ])),
         Act::ManifestLint => lint_manifest(&manifest()?),
         Act::Msix => {
             let msix = root().join(format!("target/msix/Editelier_{}_x64.msix", version()?));
@@ -1092,7 +1063,8 @@ fn act_checks(a: Act) -> R {
                 Err(bad.join(", "))
             }
         }
-    }
+    };
+    done.map(|()| String::new())
 }
 
 #[cfg(test)]

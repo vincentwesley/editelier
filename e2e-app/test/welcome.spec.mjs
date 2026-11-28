@@ -1,24 +1,11 @@
 // A-UI-01 (Short), A-UI-03 (keymaps), A-UI-05/06 (About) in a fresh app launch (own session).
-import AxeBuilder from "@axe-core/webdriverio";
 import { join } from "node:path";
 import { browser, $, $$, expect } from "@wdio/globals";
 import { connect } from "../agent.mjs";
 import { MEDIA } from "../wdio.conf.mjs";
+import { axe, key, tl, until } from "./helpers.mjs";
 
 let agent;
-const tl = async () => (await agent.call("snapshot")).project.timeline;
-const until = (fn, what, timeout = 20_000) => browser.waitUntil(fn, { timeout, interval: 100, timeoutMsg: `timed out: ${what}` });
-
-async function axe(where) {
-  const r = await new AxeBuilder({ client: browser }).analyze();
-  const bad = r.violations.filter((v) => v.impact === "serious" || v.impact === "critical");
-  expect(bad.map((v) => `${where} ${v.id}: ${v.nodes.map((n) => n.target).join(" ")}`)).toEqual([]);
-}
-
-async function key(...keys) {
-  await browser.execute(() => document.getElementById("tl-scroll").focus());
-  await browser.keys(keys);
-}
 
 /** The keys the open shortcuts sheet lists for "Split at playhead". */
 async function splitKeys() {
@@ -70,8 +57,8 @@ describe("Editelier welcome choices", () => {
     await agent.call("import_media", { paths: [join(MEDIA, "a.mp4")] });
     await until(async () => (await $$("#bin-list > li")).length === 1, "media in the bin", 60_000);
     await $('button[aria-label="Add a.mp4 to the timeline"]').click();
-    await until(async () => (await tl()).main.length === 1, "clip on the timeline");
-    const len = (await tl()).main[0].source_out;
+    await until(async () => (await tl(agent)).main.length === 1, "clip on the timeline");
+    const len = (await tl(agent)).main[0].source_out;
     await agent.call("seek", { ticks: Math.round(len / 4) });
     await until(async () => (await $("#timecode").getText()) !== "00:00:00;00", "playhead moved");
 
@@ -81,9 +68,9 @@ describe("Editelier welcome choices", () => {
     await browser.keys("Escape");
     await key("s"); // Premiere-style S is snapping, not split
     await browser.pause(300);
-    expect((await tl()).main.length).toBe(1);
+    expect((await tl(agent)).main.length).toBe(1);
     await key("Control", "k");
-    await until(async () => (await tl()).main.length === 2, "Ctrl+K split");
+    await until(async () => (await tl(agent)).main.length === 2, "Ctrl+K split");
 
     await key("Shift", "?");
     await $("#sc-keymap").selectByAttribute("value", "resolve");
@@ -93,6 +80,6 @@ describe("Editelier welcome choices", () => {
     await agent.call("seek", { ticks: Math.round((len * 3) / 4) });
     await browser.pause(150);
     await key("Control", "b");
-    await until(async () => (await tl()).main.length === 3, "Ctrl+B split");
+    await until(async () => (await tl(agent)).main.length === 3, "Ctrl+B split");
   });
 });

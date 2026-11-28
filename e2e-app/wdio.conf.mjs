@@ -39,6 +39,20 @@ function makeMedia() {
   ff(["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=8", "-ac", "2", join(MEDIA, "tone.wav")]);
 }
 
+/** PIDs of the driver chain and the app (tasklist, no dependency). */
+function e2ePids() {
+  const pids = new Set();
+  for (const exe of ["tauri-driver.exe", "msedgedriver.exe", "editelier.exe"]) {
+    const r = spawnSync("tasklist", ["/FO", "CSV", "/NH", "/FI", `IMAGENAME eq ${exe}`], { encoding: "utf8" });
+    for (const l of (r.stdout ?? "").split("\n")) {
+      const pid = Number(l.split('","')[1]);
+      if (pid) pids.add(pid);
+    }
+  }
+  return pids;
+}
+let before = new Set();
+
 export const config = {
   runner: "local",
   specs: ["./test/*.spec.mjs"],
@@ -53,5 +67,11 @@ export const config = {
   onPrepare() {
     rmSync(INFO, { force: true });
     makeMedia();
+    before = e2ePids();
+  },
+  // The service stops tauri-driver but not its msedgedriver child (nor a stuck app): stop only the
+  // PIDs this run started, so `npm test` alone leaves nothing behind (xtask keeps a backstop).
+  onComplete() {
+    for (const pid of e2ePids()) if (!before.has(pid)) spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"]);
   },
 };

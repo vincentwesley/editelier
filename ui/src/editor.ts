@@ -331,13 +331,12 @@ function renderInspector(p: Project): void {
 
 // ---- menu ----
 /** The first key for an action in the active key set, as shown to people ("Ctrl+K", "?"). */
-const keyFor =(a: Action) => {
+const keyFor = (a: Action) => {
   const c = KEYMAPS[state.keymap].keys[a]?.[0];
   return c ? displayChord(c) : null;
 };
 
 function renderMenu(): void {
-  const keys = KEYMAPS[state.keymap].keys;
   // Every action button says what it does and its key on hover (e.g. "Trim clip start to playhead (Q)").
   for (const b of document.querySelectorAll<HTMLElement>("#editor [data-action]")) {
     const a = b.dataset.action as Action;
@@ -345,18 +344,10 @@ function renderMenu(): void {
     b.title = k ? `${ACTIONS[a]} (${k})` : ACTIONS[a];
   }
   $("#actions-list").replaceChildren(
-    ...(Object.entries(ACTIONS) as [Action, string][]).map(([a, label]) =>
-      h(
-        "li",
-        {},
-        h(
-          "button",
-          { type: "button", class: "menu__item", "data-action": a, "data-menu": "" },
-          h("span", {}, label),
-          keys[a]?.[0] ? h("kbd", {}, displayChord(keys[a]![0]!)) : null,
-        ),
-      ),
-    ),
+    ...(Object.entries(ACTIONS) as [Action, string][]).map(([a, label]) => {
+      const k = keyFor(a);
+      return h("li", {}, h("button", { type: "button", class: "menu__item", "data-action": a, "data-menu": "" }, h("span", {}, label), k ? h("kbd", {}, k) : null));
+    }),
   );
 }
 
