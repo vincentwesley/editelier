@@ -162,7 +162,14 @@ fn check(name: &str, tools: &Tools, s: &Session, srcs: &mut [Src], want: &[(usiz
     std::fs::create_dir_all(out.parent().unwrap()).unwrap();
     let mut enc = Command::new(&tools.ffmpeg)
         .args(["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "nv12"])
-        .args(["-s", &format!("{w}x{h}"), "-framerate", "30", "-i", "pipe:0"])
+        .args([
+            "-s",
+            &format!("{w}x{h}"),
+            "-framerate",
+            "30",
+            "-i",
+            "pipe:0",
+        ])
         .args(["-c:v", "ffv1", "-level", "3"])
         .arg(&out)
         .stdin(Stdio::piped())

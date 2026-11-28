@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the shipped FFmpeg (D3, packaging/ffmpeg-build.md): LGPLv2.1-only, shared, win64,
+# Builds the shipped FFmpeg (D3, packaging/ffmpeg-build.md): LGPL-2.1-or-later, shared, win64,
 # cross-compiled with mingw-w64 on Ubuntu 24.04 (WSL2). One command, from the repo root in WSL:
 #   bash packaging/build-ffmpeg.sh
 # Output: third_party/ffmpeg-lgpl/ (bin/ffmpeg.exe, ffprobe.exe, DLLs, LICENSE.txt, PINNED.txt)
