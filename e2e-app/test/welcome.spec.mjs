@@ -33,13 +33,17 @@ describe("Editelier welcome choices", () => {
     agent = await connect();
   });
   after(() => agent?.close());
+  // A failed test must not leave a modal open over the next one.
+  afterEach(() => browser.execute(() => document.querySelectorAll("dialog[open]").forEach((d) => d.close())));
 
   it("A-UI-05 A-UI-06: About dialog credits, logo, artist and FFmpeg LGPL notice (axe)", async () => {
     await $('.top button[data-open="about-dialog"]').click();
     const about = $("#about-dialog");
     await expect(about).toBeDisplayed();
     const text = await about.getText();
-    for (const s of ["Designed and built by Vin", "Portus Workstation", "@portus_workstation", "@wason25_pz", "LGPLv2.1"]) expect(text).toContain(s);
+    // D13: the Welcome footer's house credits card (artist handles, draggable logo) moves into About while open.
+    for (const s of ["Designed and built by Vin", "@portus_workstation", "@wason25_pz", "LGPLv2.1"]) expect(text).toContain(s);
+    expect(await $("#about-dialog .creator").isExisting()).toBe(true);
     const hrefs = await browser.execute(() => [...document.querySelectorAll("#about-dialog a")].map((a) => a.href));
     for (const h of ["https://ffmpeg.org", "https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html", "https://github.com/vincentwesley/editelier/releases"]) {
       expect(hrefs.some((x) => x.startsWith(h))).toBe(true);
@@ -48,9 +52,9 @@ describe("Editelier welcome choices", () => {
     await axe("about dark");
     await browser.keys("Escape");
     await expect(about).not.toBeDisplayed();
-    // D13: the house credits card + draggable studio logo sit in About as well as the Welcome footer.
+    // ...and back to the Welcome footer on close.
     expect(await $(".welcome__footer .creator").isExisting()).toBe(true);
-    expect(await $("#about-dialog .creator").isExisting()).toBe(true);
+    expect(await $("#about-dialog .creator").isExisting()).toBe(false);
   });
 
   it("A-UI-01: Short + Premiere-style -> 1080x1920 canvas, TikTok preset", async () => {
