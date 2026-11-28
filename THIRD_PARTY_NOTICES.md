@@ -47,9 +47,21 @@ All permissive: `wgpu` 30 and its `wgpu-*`/`naga` crates (MIT OR Apache-2.0), `c
 
 Beyond the crates above and Tauri's own (listed in `docs/spikes/preview-surface.md`): `cpal` 0.18 (Apache-2.0) with `dasp_*` (MIT OR Apache-2.0) for audio output, `tauri-plugin-dialog` 2.8 (Apache-2.0 OR MIT) with `rfd` (MIT) for file pickers, `ebur128` (MIT, via `editelier-export`). Full list: `cargo tree -p editelier -e normal -f "{p} {l}"`.
 
-## FFmpeg (not in the repo; bundled in the MSIX)
+## MPL-2.0 Rust crates (compiled into the app, unmodified)
 
-Shipped builds bundle our own FFmpeg 8.1.3 build (`packaging/build-ffmpeg.sh` → gitignored `third_party/ffmpeg-lgpl/`, D3): `ffmpeg.exe`, `ffprobe.exe` and the `av*`/`sw*` DLLs under **LGPL-2.1-or-later** (no gpl/version3/nonfree; no software H.264/HEVC/AAC). Statically linked into those DLLs: **dav1d 1.5.5** (VideoLAN, BSD-2-Clause, https://code.videolan.org/videolan/dav1d) and **zlib 1.3.1** (Jean-loup Gailly and Mark Adler, Zlib licence, https://zlib.net). All three licence texts are in the build's `LICENSE.txt`, which `cargo xtask package` writes to `licences/FFmpeg/LICENSE.txt` beside `licences/FFmpeg/BUILD-FFMPEG.txt` (configure line + versions). Source: https://ffmpeg.org; the exact source archives and build script are attached to each GitHub Release.
+Pulled in by Tauri (`tauri-utils` → `dom_query`; `dirs` → `dirs-sys`). Used as published on crates.io, with no changes; their source is at the links below (MPL-2.0 §3.2). Licence text: https://mozilla.org/MPL/2.0/
+
+| Crate | Version | Source | Licence |
+|---|---|---|---|
+| cssparser | 0.37.0 | https://crates.io/crates/cssparser, https://github.com/servo/rust-cssparser | MPL-2.0 |
+| cssparser-macros | 0.7.1 | https://crates.io/crates/cssparser-macros, https://github.com/servo/rust-cssparser | MPL-2.0 |
+| selectors | 0.38.0 | https://crates.io/crates/selectors, https://github.com/servo/stylo | MPL-2.0 |
+| dtoa-short | 0.3.5 | https://crates.io/crates/dtoa-short, https://github.com/upsuper/dtoa-short | MPL-2.0 |
+| option-ext | 0.2.0 | https://crates.io/crates/option-ext, https://github.com/soc/option-ext | MPL-2.0 |
+
+## FFmpeg (not in the repo; bundled in the MSIX and the portable ZIP)
+
+Shipped builds bundle our own FFmpeg 8.1.3 build (`packaging/build-ffmpeg.sh` → gitignored `third_party/ffmpeg-lgpl/`, D3): `ffmpeg.exe`, `ffprobe.exe` and the `av*`/`sw*` DLLs under **LGPL-2.1-or-later** (no gpl/version3/nonfree; no software H.264/HEVC/AAC). Statically linked into those DLLs: **dav1d 1.5.5** (VideoLAN, BSD-2-Clause, https://code.videolan.org/videolan/dav1d) and **zlib 1.3.1** (Jean-loup Gailly and Mark Adler, Zlib licence, https://zlib.net). All three licence texts are in the build's `LICENSE.txt`, which `cargo xtask package` (and `package --portable`) writes to `licences/FFmpeg/LICENSE.txt` beside `licences/FFmpeg/BUILD-FFMPEG.txt` (configure line + versions). Source: https://ffmpeg.org; the exact source archives and build script are attached to each GitHub Release.
 
 Dev builds may instead use a BtbN `lgpl-shared` build (`scripts/fetch-ffmpeg.ps1` → `third_party/ffmpeg/`, LGPL-3.0-or-later, contains the software H.264/HEVC/AAC codecs); it is never shipped.
 

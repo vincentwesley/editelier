@@ -220,6 +220,7 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 0.35em; font-size: 0.8
 .about a { color: var(--accent); }
 .about__logo { height: 2.5rem; width: auto; margin-bottom: 0.5rem; }
 .about__legal { font-size: 0.85rem; color: var(--fg-muted); }
+.note { font-size: 0.75rem; margin: 0.4rem 0 0; }
 
 .toast { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0.5rem 0.5rem 1rem; }
 .toast__msg { margin: 0; flex: 1; font-size: 0.9rem; }
